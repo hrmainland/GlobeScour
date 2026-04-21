@@ -10,3 +10,7 @@ services:
         value: 3.12.0
       - key: VITE_MAPBOX_TOKEN
         sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

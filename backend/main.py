@@ -5,7 +5,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routers import locations
+from routers import locations, research
 
 app = FastAPI(title="GlobeScour API")
 
@@ -17,6 +17,7 @@ app.add_middleware(
 )
 
 app.include_router(locations.router)
+app.include_router(research.router)
 
 
 @app.get("/api/health")

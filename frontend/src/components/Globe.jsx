@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import PinModal from './PinModal'
+import Drawer from './Drawer'
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
 
@@ -22,7 +23,8 @@ export default function Globe({ user }) {
   const mapRef = useRef(null)
   const markersRef = useRef({})
   const [pins, setPins] = useState([])
-  const [modal, setModal] = useState(null) // { lat, lng, suggestedName, locationType }
+  const [modal, setModal] = useState(null)   // { lat, lng, suggestedName, locationType }
+  const [drawer, setDrawer] = useState(null) // pin object
 
   useEffect(() => {
     if (!TOKEN) {
@@ -77,15 +79,13 @@ export default function Globe({ user }) {
         cursor: pointer;
         box-shadow: 0 0 6px rgba(0,0,0,0.4);
       `
-      el.addEventListener('click', e => e.stopPropagation())
+      el.addEventListener('click', e => {
+        e.stopPropagation()
+        setDrawer(pin)
+      })
 
       new mapboxgl.Marker({ element: el })
         .setLngLat([pin.lng, pin.lat])
-        .setPopup(
-          new mapboxgl.Popup({ offset: 12 }).setHTML(
-            `<strong>${pin.name}</strong><br/><small>Added by ${pin.created_by}</small>`
-          )
-        )
         .addTo(map)
 
       markersRef.current[pin.id] = true
@@ -117,6 +117,12 @@ export default function Globe({ user }) {
           suggestedName={modal.suggestedName}
           onSave={handleSavePin}
           onCancel={() => setModal(null)}
+        />
+      )}
+      {drawer && (
+        <Drawer
+          pin={drawer}
+          onClose={() => setDrawer(null)}
         />
       )}
     </>
