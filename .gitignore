@@ -13,6 +13,9 @@ frontend/dist/
 frontend/.env.local
 backend/.env
 
+# Design handoff (reference only, not shipped)
+design_handoff_globescour/
+
 # OS
 .DS_Store
 
