@@ -5,14 +5,25 @@ import PinModal from './PinModal'
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
 
+async function reverseGeocode(lng, lat) {
+  try {
+    const res = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=place,locality,poi&limit=1&access_token=${TOKEN}`
+    )
+    const data = await res.json()
+    return data.features?.[0]?.text ?? null
+  } catch {
+    return null
+  }
+}
+
 export default function Globe({ user }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
-  const markersRef = useRef({}) // id -> Marker, prevents duplicate markers
+  const markersRef = useRef({})
   const [pins, setPins] = useState([])
-  const [pendingClick, setPendingClick] = useState(null) // { lat, lng }
+  const [modal, setModal] = useState(null) // { lat, lng, suggestedName, locationType }
 
-  // Initialise map
   useEffect(() => {
     if (!TOKEN) {
       console.error('VITE_MAPBOX_TOKEN is not set')
@@ -30,22 +41,27 @@ export default function Globe({ user }) {
 
     map.addControl(new mapboxgl.NavigationControl())
 
-    map.on('click', e => {
-      setPendingClick({ lat: e.lngLat.lat, lng: e.lngLat.lng })
+    map.on('click', async (e) => {
+      const { lat, lng } = e.lngLat
+      const suggestedName = await reverseGeocode(lng, lat)
+      setModal({
+        lat,
+        lng,
+        suggestedName,
+        locationType: suggestedName ? 'named' : 'coordinate',
+      })
     })
 
     mapRef.current = map
     return () => map.remove()
   }, [])
 
-  // Fetch all pins on mount
   useEffect(() => {
     fetch('/api/locations')
       .then(r => r.json())
       .then(setPins)
   }, [])
 
-  // Add a marker for each pin not yet on the map
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -61,7 +77,6 @@ export default function Globe({ user }) {
         cursor: pointer;
         box-shadow: 0 0 6px rgba(0,0,0,0.4);
       `
-      // Prevent map click from firing when clicking a marker
       el.addEventListener('click', e => e.stopPropagation())
 
       new mapboxgl.Marker({ element: el })
@@ -81,20 +96,27 @@ export default function Globe({ user }) {
     const res = await fetch('/api/locations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, lat: pendingClick.lat, lng: pendingClick.lng, created_by: user }),
+      body: JSON.stringify({
+        name,
+        lat: modal.lat,
+        lng: modal.lng,
+        created_by: user,
+        location_type: modal.locationType,
+      }),
     })
     const pin = await res.json()
     setPins(prev => [...prev, pin])
-    setPendingClick(null)
+    setModal(null)
   }
 
   return (
     <>
       <div ref={containerRef} style={{ width: '100%', height: '100vh' }} />
-      {pendingClick && (
+      {modal && (
         <PinModal
+          suggestedName={modal.suggestedName}
           onSave={handleSavePin}
-          onCancel={() => setPendingClick(null)}
+          onCancel={() => setModal(null)}
         />
       )}
     </>

@@ -43,8 +43,16 @@ const btnPrimary = {
   color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer',
 }
 
-export default function PinModal({ onSave, onCancel }) {
-  const [name, setName] = useState('')
+const hint = {
+  fontSize: 11,
+  color: 'rgba(255,255,255,0.4)',
+  fontFamily: 'monospace',
+  letterSpacing: '0.05em',
+  marginTop: -8,
+}
+
+export default function PinModal({ suggestedName, onSave, onCancel }) {
+  const [name, setName] = useState(suggestedName ?? '')
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -62,6 +70,9 @@ export default function PinModal({ onSave, onCancel }) {
           onChange={e => setName(e.target.value)}
           placeholder="e.g. Taghazout"
         />
+        {suggestedName && (
+          <p style={hint}>suggested from map — edit if needed</p>
+        )}
         <div style={row}>
           <button style={btnSecondary} type="button" onClick={onCancel}>Cancel</button>
           <button style={btnPrimary} type="submit">Save</button>

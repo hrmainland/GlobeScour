@@ -11,6 +11,7 @@ class LocationIn(BaseModel):
     lat: float
     lng: float
     created_by: str
+    location_type: str = "named"  # "named" | "coordinate"
 
 
 def serialize(doc) -> dict:
