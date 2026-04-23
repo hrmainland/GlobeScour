@@ -42,10 +42,11 @@ function CriterionCard({ criterion, rating, note }) {
   )
 }
 
-export default function Drawer({ pin, criteria, onClose, onResearchDone }) {
+export default function Drawer({ pin, criteria, onClose, onResearchDone, onDelete }) {
   const [research, setResearch] = useState(pin.research ?? null)
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
+  const [deleting, setDeleting] = useState(false)
   const [heightPx, setHeightPx] = useState(INITIAL_PX)
 
   const drawerRef  = useRef(null)
@@ -129,6 +130,12 @@ export default function Drawer({ pin, criteria, onClose, onResearchDone }) {
     }
   }, [])
 
+  async function handleDelete() {
+    setDeleting(true)
+    await fetch(`/api/locations/${pin.id}`, { method: 'DELETE' })
+    onDelete?.(pin.id)
+  }
+
   async function handleResearch() {
     setLoading(true)
     setError(null)
@@ -201,13 +208,26 @@ export default function Drawer({ pin, criteria, onClose, onResearchDone }) {
               Added by {pin.created_by}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
-              fontSize: 20, cursor: 'pointer', padding: '2px 4px', lineHeight: 1, flexShrink: 0,
-            }}
-          >✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{
+                background: 'none', border: 'none', color: 'rgba(239,68,68,0.5)',
+                fontSize: 12, cursor: 'pointer', padding: '4px 6px', lineHeight: 1,
+                fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em',
+              }}
+            >
+              {deleting ? 'deleting…' : 'delete'}
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
+                fontSize: 20, cursor: 'pointer', padding: '2px 4px', lineHeight: 1,
+              }}
+            >✕</button>
+          </div>
         </div>
         </div>{/* end headerRef wrapper */}
 

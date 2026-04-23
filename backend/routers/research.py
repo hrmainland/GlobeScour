@@ -1,8 +1,27 @@
 import os
+import json
+import functools
 from fastapi import APIRouter, HTTPException
 from bson import ObjectId
 import anthropic
 from db import locations, maps
+
+
+def log_claude_request(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        print("\n" + "=" * 60)
+        print("CLAUDE API REQUEST")
+        print("=" * 60)
+        print(json.dumps(kwargs, indent=2, default=str))
+        print("=" * 60 + "\n")
+        return func(*args, **kwargs)
+    return wrapper
+
+
+@log_claude_request
+def _claude_create(client, **kwargs):
+    return client.messages.create(**kwargs)
 
 router = APIRouter(prefix="/api/locations")
 
@@ -54,11 +73,31 @@ def build_record_tool(criteria: list[str]) -> dict:
     }
 
 
-def research_location(name: str, lat: float, lng: float, location_type: str, criteria: list[str], vision: str) -> dict:
-    if location_type == "named":
-        user_msg = f"Research the destination: {name}. Focus on the criteria: {', '.join(criteria)}."
-    else:
-        user_msg = f"Research destinations near coordinates {lat:.4f}, {lng:.4f}. Focus on the criteria: {', '.join(criteria)}."
+def build_user_message(name: str, lat: float, lng: float, geocode_context: dict | None, criteria: list[str]) -> str:
+    lines = [
+        f"User-given name: {name}",
+        f"Coordinates: {lat:.6f}, {lng:.6f}",
+    ]
+    if geocode_context:
+        place_name = geocode_context.get("placeName")
+        if place_name:
+            lines.append(f"Full location: {place_name}")
+        ctx_levels = [c["text"] for c in geocode_context.get("context", []) if c.get("text")]
+        if ctx_levels:
+            lines.append(f"Geographic context: {', '.join(ctx_levels)}")
+
+    location_block = "\n".join(f"  {l}" for l in lines)
+    return (
+        f"Research this destination and evaluate it against the criteria: {', '.join(criteria)}.\n\n"
+        f"Location details:\n{location_block}\n\n"
+        "Use the geographic information above to identify the exact location, then search for it."
+    )
+
+
+def research_location(name: str, lat: float, lng: float, geocode_context: dict | None, criteria: list[str], vision: str) -> dict:
+    user_msg = build_user_message(name, lat, lng, geocode_context, criteria)
+    print("\n[research] geocode_context from DB:", json.dumps(geocode_context, indent=2))
+    print("[research] user message:\n", user_msg)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -66,8 +105,9 @@ def research_location(name: str, lat: float, lng: float, location_type: str, cri
     tools = [{"type": "web_search_20260209", "name": "web_search"}, build_record_tool(criteria)]
 
     while True:
-        response = client.messages.create(
-            model="claude-opus-4-7",
+        response = _claude_create(
+            client,
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             system=build_system_prompt(criteria, vision),
             tools=tools,
@@ -119,7 +159,7 @@ def run_research(location_id: str):
         name=doc["name"],
         lat=doc["lat"],
         lng=doc["lng"],
-        location_type=doc.get("location_type", "named"),
+        geocode_context=doc.get("geocode_context"),
         criteria=criteria,
         vision=vision,
     )
