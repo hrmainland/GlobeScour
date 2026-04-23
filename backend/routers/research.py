@@ -2,84 +2,79 @@ import os
 from fastapi import APIRouter, HTTPException
 from bson import ObjectId
 import anthropic
-from db import locations
+from db import locations, maps
 
 router = APIRouter(prefix="/api/locations")
 
-SYSTEM_PROMPT = """You are a surf travel researcher. Use web_search to look up the destination, then call record_research with your findings.
+DEFAULT_CRITERIA = ["Waves", "Crowds", "Accessibility", "Accommodation", "Vibe"]
+
+
+def build_system_prompt(criteria: list[str], vision: str) -> str:
+    criteria_list = ", ".join(criteria)
+    vision_line = f"\nTrip vision: {vision}" if vision.strip() else ""
+    return f"""You are a travel researcher.{vision_line} Use web_search to look up the destination, then call record_research with your findings.
+
+Evaluate the location across these criteria: {criteria_list}
 
 Rating guide:
 - green = excellent / highly recommended
 - amber = moderate / some caveats
 - red = poor / significant downsides"""
 
-# Claude calls this tool to submit structured results — no JSON parsing needed
-RECORD_TOOL = {
-    "name": "record_research",
-    "description": "Record the final research findings for the surf spot.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "summary": {
-                "type": "string",
-                "description": "2-3 sentence overview of the spot",
-            },
-            "ratings": {
-                "type": "object",
-                "properties": {
-                    "waves":         {"type": "string", "enum": ["green", "amber", "red"]},
-                    "crowds":        {"type": "string", "enum": ["green", "amber", "red"]},
-                    "accessibility": {"type": "string", "enum": ["green", "amber", "red"]},
-                    "accommodation": {"type": "string", "enum": ["green", "amber", "red"]},
-                    "vibe":          {"type": "string", "enum": ["green", "amber", "red"]},
+
+def build_record_tool(criteria: list[str]) -> dict:
+    return {
+        "name": "record_research",
+        "description": "Record the final research findings for the location.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "2-3 sentence overview of the location",
                 },
-                "required": ["waves", "crowds", "accessibility", "accommodation", "vibe"],
-            },
-            "ratings_notes": {
-                "type": "object",
-                "properties": {
-                    "waves":         {"type": "string"},
-                    "crowds":        {"type": "string"},
-                    "accessibility": {"type": "string"},
-                    "accommodation": {"type": "string"},
-                    "vibe":          {"type": "string"},
+                "ratings": {
+                    "type": "object",
+                    "properties": {c: {"type": "string", "enum": ["green", "amber", "red"]} for c in criteria},
+                    "required": criteria,
                 },
-                "required": ["waves", "crowds", "accessibility", "accommodation", "vibe"],
+                "ratings_notes": {
+                    "type": "object",
+                    "properties": {c: {"type": "string"} for c in criteria},
+                    "required": criteria,
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "URLs or titles of sources used",
+                },
             },
-            "sources": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "URLs or titles of sources used",
-            },
+            "required": ["summary", "ratings", "ratings_notes", "sources"],
         },
-        "required": ["summary", "ratings", "ratings_notes", "sources"],
-    },
-}
+    }
 
 
-def research_location(name: str, lat: float, lng: float, location_type: str) -> dict:
+def research_location(name: str, lat: float, lng: float, location_type: str, criteria: list[str], vision: str) -> dict:
     if location_type == "named":
-        user_msg = f"Research the surf spot: {name}. Look up waves, crowds, accommodation, how to get there, and overall vibe."
+        user_msg = f"Research the destination: {name}. Focus on the criteria: {', '.join(criteria)}."
     else:
-        user_msg = f"Research surf spots near coordinates {lat:.4f}, {lng:.4f}. Look up waves, crowds, accommodation, access, and vibe."
+        user_msg = f"Research destinations near coordinates {lat:.4f}, {lng:.4f}. Focus on the criteria: {', '.join(criteria)}."
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     messages = [{"role": "user", "content": user_msg}]
-    tools = [{"type": "web_search_20260209", "name": "web_search"}, RECORD_TOOL]
+    tools = [{"type": "web_search_20260209", "name": "web_search"}, build_record_tool(criteria)]
 
     while True:
         response = client.messages.create(
             model="claude-opus-4-7",
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=build_system_prompt(criteria, vision),
             tools=tools,
-            # Force Claude to always call a tool — prevents plain-text replies
             tool_choice={"type": "any"},
             messages=messages,
         )
 
-        # Check if Claude called record_research
         record_block = next(
             (b for b in response.content if getattr(b, "type", None) == "tool_use" and b.name == "record_research"),
             None,
@@ -87,11 +82,9 @@ def research_location(name: str, lat: float, lng: float, location_type: str) -> 
         if record_block:
             return record_block.input
 
-        # Otherwise it used web_search (pause_turn) — append and continue
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "pause_turn":
-            # Unexpected stop without record_research — give it one more chance
             messages.append({
                 "role": "user",
                 "content": "Now call record_research with your findings.",
@@ -109,11 +102,26 @@ def run_research(location_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Location not found")
 
+    # Pull criteria from the map this location belongs to
+    criteria = DEFAULT_CRITERIA
+    vision = ""
+    map_id = doc.get("map_id")
+    if map_id:
+        try:
+            map_doc = maps.find_one({"_id": ObjectId(map_id)})
+            if map_doc and map_doc.get("criteria"):
+                criteria = map_doc["criteria"].get("items", DEFAULT_CRITERIA) or DEFAULT_CRITERIA
+                vision = map_doc["criteria"].get("vision", "")
+        except Exception:
+            pass
+
     result = research_location(
         name=doc["name"],
         lat=doc["lat"],
         lng=doc["lng"],
         location_type=doc.get("location_type", "named"),
+        criteria=criteria,
+        vision=vision,
     )
 
     locations.update_one(

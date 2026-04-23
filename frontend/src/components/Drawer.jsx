@@ -1,15 +1,5 @@
 import { useState } from 'react'
 
-const CRITERIA = ['waves', 'crowds', 'accessibility', 'accommodation', 'vibe']
-
-const CRITERION_LABELS = {
-  waves: 'Waves',
-  crowds: 'Crowds',
-  accessibility: 'Getting There',
-  accommodation: 'Stay',
-  vibe: 'Vibe',
-}
-
 const TRAFFIC_COLORS = {
   green: { bg: '#22c55e', glow: 'rgba(34,197,94,0.45)' },
   amber: { bg: '#f59e0b', glow: 'rgba(245,158,11,0.45)' },
@@ -41,7 +31,7 @@ function RatingRow({ criterion, rating, note }) {
       <TrafficLight rating={rating} />
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.9)', letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace" }}>
-          {CRITERION_LABELS[criterion]}
+          {criterion}
         </div>
         {note && (
           <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 2, lineHeight: 1.4 }}>
@@ -53,10 +43,12 @@ function RatingRow({ criterion, rating, note }) {
   )
 }
 
-export default function Drawer({ pin, onClose }) {
+export default function Drawer({ pin, criteria, onClose, onResearchDone }) {
   const [research, setResearch] = useState(pin.research ?? null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  const criteriaItems = criteria?.items ?? []
 
   async function handleResearch() {
     setLoading(true)
@@ -66,6 +58,7 @@ export default function Drawer({ pin, onClose }) {
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const data = await res.json()
       setResearch(data)
+      onResearchDone?.(data)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -75,16 +68,11 @@ export default function Drawer({ pin, onClose }) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0,
-          zIndex: 900,
-        }}
+        style={{ position: 'fixed', inset: 0, zIndex: 900 }}
       />
 
-      {/* Panel */}
       <div style={{
         position: 'fixed',
         top: 0, right: 0, bottom: 0,
@@ -99,7 +87,6 @@ export default function Drawer({ pin, onClose }) {
         fontFamily: "'Inter Tight', Inter, sans-serif",
       }}>
 
-        {/* Header */}
         <div style={{
           padding: '24px 24px 0',
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
@@ -129,8 +116,13 @@ export default function Drawer({ pin, onClose }) {
 
           {!research && !loading && (
             <div style={{ marginTop: 8 }}>
+              {criteriaItems.length > 0 && (
+                <p style={{ margin: '0 0 12px', fontSize: 13, color: 'rgba(255,255,255,0.35)', lineHeight: 1.5 }}>
+                  Will rate: {criteriaItems.join(' · ')}
+                </p>
+              )}
               <p style={{ margin: '0 0 16px', fontSize: 14, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-                Claude will search the web and rate this spot across five criteria.
+                Claude will search the web and rate this spot across your criteria.
               </p>
               <button onClick={handleResearch} style={{
                 width: '100%', padding: '12px 0',
@@ -186,7 +178,7 @@ export default function Drawer({ pin, onClose }) {
               </p>
 
               <div style={{ marginBottom: 24 }}>
-                {CRITERIA.map(c => (
+                {criteriaItems.map(c => (
                   <RatingRow
                     key={c}
                     criterion={c}
@@ -194,6 +186,17 @@ export default function Drawer({ pin, onClose }) {
                     note={research.ratings_notes?.[c]}
                   />
                 ))}
+                {/* Show any criteria in the result not in current criteria list */}
+                {Object.keys(research.ratings ?? {})
+                  .filter(k => !criteriaItems.includes(k))
+                  .map(c => (
+                    <RatingRow
+                      key={c}
+                      criterion={c}
+                      rating={research.ratings[c]}
+                      note={research.ratings_notes?.[c]}
+                    />
+                  ))}
               </div>
 
               {research.sources?.length > 0 && (
@@ -202,10 +205,7 @@ export default function Drawer({ pin, onClose }) {
                     Sources
                   </div>
                   {research.sources.map((src, i) => (
-                    <div key={i} style={{
-                      fontSize: 12, color: 'rgba(255,255,255,0.4)',
-                      marginBottom: 4, wordBreak: 'break-all',
-                    }}>
+                    <div key={i} style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 4, wordBreak: 'break-all' }}>
                       {src.startsWith('http')
                         ? <a href={src} target="_blank" rel="noopener noreferrer" style={{ color: 'oklch(0.82 0.13 200)', textDecoration: 'none' }}>{src}</a>
                         : src

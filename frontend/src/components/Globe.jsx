@@ -3,6 +3,7 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import PinModal from './PinModal'
 import Drawer from './Drawer'
+import ToolbarPanel from './ToolbarPanel'
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
 
@@ -18,13 +19,14 @@ async function reverseGeocode(lng, lat) {
   }
 }
 
-export default function Globe({ user }) {
+export default function Globe({ user, map, onMapChange }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
   const [pins, setPins] = useState([])
-  const [modal, setModal] = useState(null)   // { lat, lng, suggestedName, locationType }
-  const [drawer, setDrawer] = useState(null) // pin object
+  const [modal, setModal] = useState(null)
+  const [drawer, setDrawer] = useState(null)
+  const [criteria, setCriteria] = useState(map.criteria ?? { items: [], vision: '' })
 
   useEffect(() => {
     if (!TOKEN) {
@@ -33,7 +35,7 @@ export default function Globe({ user }) {
     }
 
     mapboxgl.accessToken = TOKEN
-    const map = new mapboxgl.Map({
+    const m = new mapboxgl.Map({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
       projection: 'globe',
@@ -41,9 +43,9 @@ export default function Globe({ user }) {
       center: [0, 20],
     })
 
-    map.addControl(new mapboxgl.NavigationControl())
+    m.addControl(new mapboxgl.NavigationControl())
 
-    map.on('click', async (e) => {
+    m.on('click', async (e) => {
       const { lat, lng } = e.lngLat
       const suggestedName = await reverseGeocode(lng, lat)
       setModal({
@@ -54,19 +56,19 @@ export default function Globe({ user }) {
       })
     })
 
-    mapRef.current = map
-    return () => map.remove()
+    mapRef.current = m
+    return () => m.remove()
   }, [])
 
   useEffect(() => {
-    fetch('/api/locations')
+    fetch(`/api/locations?map_id=${map.id}`)
       .then(r => r.json())
       .then(setPins)
-  }, [])
+  }, [map.id])
 
   useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
+    const m = mapRef.current
+    if (!m) return
 
     pins.forEach(pin => {
       if (markersRef.current[pin.id]) return
@@ -86,7 +88,7 @@ export default function Globe({ user }) {
 
       new mapboxgl.Marker({ element: el })
         .setLngLat([pin.lng, pin.lat])
-        .addTo(map)
+        .addTo(m)
 
       markersRef.current[pin.id] = true
     })
@@ -101,6 +103,7 @@ export default function Globe({ user }) {
         lat: modal.lat,
         lng: modal.lng,
         created_by: user,
+        map_id: map.id,
         location_type: modal.locationType,
       }),
     })
@@ -109,9 +112,19 @@ export default function Globe({ user }) {
     setModal(null)
   }
 
+  function handleCriteriaChange(updated) {
+    setCriteria(updated)
+    onMapChange({ ...map, criteria: updated })
+  }
+
   return (
     <>
       <div ref={containerRef} style={{ width: '100%', height: '100vh' }} />
+      <ToolbarPanel
+        mapId={map.id}
+        criteria={criteria}
+        onCriteriaChange={handleCriteriaChange}
+      />
       {modal && (
         <PinModal
           suggestedName={modal.suggestedName}
@@ -122,7 +135,13 @@ export default function Globe({ user }) {
       {drawer && (
         <Drawer
           pin={drawer}
+          criteria={criteria}
           onClose={() => setDrawer(null)}
+          onResearchDone={(result) => {
+            const updated = { ...drawer, research: result, research_status: 'done' }
+            setPins(prev => prev.map(p => p.id === drawer.id ? updated : p))
+            setDrawer(updated)
+          }}
         />
       )}
     </>

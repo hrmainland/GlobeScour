@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from db import locations
 
@@ -11,7 +11,8 @@ class LocationIn(BaseModel):
     lat: float
     lng: float
     created_by: str
-    location_type: str = "named"  # "named" | "coordinate"
+    map_id: str
+    location_type: str = "named"
 
 
 def serialize(doc) -> dict:
@@ -20,8 +21,8 @@ def serialize(doc) -> dict:
 
 
 @router.get("")
-def list_locations():
-    return [serialize(doc) for doc in locations.find()]
+def list_locations(map_id: str = Query(...)):
+    return [serialize(doc) for doc in locations.find({"map_id": map_id})]
 
 
 @router.post("", status_code=201)

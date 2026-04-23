@@ -8,3 +8,4 @@ if not uri:
 client = MongoClient(uri)
 db = client["GlobeScour"]
 locations = db["locations"]
+maps = db["maps"]

@@ -5,7 +5,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routers import locations, research
+from routers import locations, research, maps
 
 app = FastAPI(title="GlobeScour API")
 
@@ -16,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(maps.router)
 app.include_router(locations.router)
 app.include_router(research.router)
 
