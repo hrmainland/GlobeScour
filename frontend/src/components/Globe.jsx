@@ -7,6 +7,8 @@ import ToolbarPanel from "./ToolbarPanel";
 import HamburgerMenu from "./HamburgerMenu";
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+const PIN_CLICK_MIN_ZOOM = 6;
+const PIN_CLICK_SPEED = 4;
 const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
 const SEARCH_KEY = (mapId) => `globescour_search_${mapId}`;
 
@@ -28,22 +30,51 @@ async function reverseGeocode(lng, lat) {
   }
 }
 
+// "mapbox" — better ranking, misses small/obscure places
+// "nominatim" — OSM-based, better coverage of surf spots and small communities
+const SEARCH_PLATFORM = "nominatim";
+
 async function forwardGeocode(query) {
   try {
-    const res = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?types=place,locality,region,poi&limit=5&access_token=${TOKEN}`,
-      // `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?&limit=5&access_token=${TOKEN}`,
-    );
-    const data = await res.json();
-    return (data.features ?? []).map((f, i) => ({
-      _sid: `suggest_${i}_${Date.now()}`,
-      name: f.text,
-      placeName: f.place_name,
-      lat: f.center[1],
-      lng: f.center[0],
-      context: f.context ?? [],
-      isSuggestion: true,
-    }));
+    if (SEARCH_PLATFORM === "nominatim") {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`,
+        { headers: { "User-Agent": "GlobeScour/1.0" } },
+      );
+      const data = await res.json();
+      return data.map((f, i) => {
+        const a = f.address ?? {};
+        const region = a.state ?? a.county ?? null;
+        const country = a.country ?? null;
+        const context = [
+          region && { id: "region.0", text: region },
+          country && { id: "country.0", text: country },
+        ].filter(Boolean);
+        return {
+          _sid: `suggest_${i}_${Date.now()}`,
+          name: f.name || f.display_name.split(",")[0],
+          placeName: f.display_name,
+          lat: parseFloat(f.lat),
+          lng: parseFloat(f.lon),
+          context,
+          isSuggestion: true,
+        };
+      });
+    } else {
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?types=place,locality,region,poi&limit=5&access_token=${TOKEN}`,
+      );
+      const data = await res.json();
+      return (data.features ?? []).map((f, i) => ({
+        _sid: `suggest_${i}_${Date.now()}`,
+        name: f.text,
+        placeName: f.place_name,
+        lat: f.center[1],
+        lng: f.center[0],
+        context: f.context ?? [],
+        isSuggestion: true,
+      }));
+    }
   } catch {
     return [];
   }
@@ -86,8 +117,14 @@ export default function Globe({ user, map, onMapChange, onExit }) {
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key !== "Escape") return;
-      if (modal) { setModal(null); return; }
-      if (drawer) { setDrawer(null); return; }
+      if (modal) {
+        setModal(null);
+        return;
+      }
+      if (drawer) {
+        setDrawer(null);
+        return;
+      }
       if (toolbarMode !== "browse") {
         if (toolbarMode === "search") handleSearchTabClose();
         setToolbarMode("browse");
@@ -167,6 +204,11 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const latest = pinsRef.current.find((p) => p.id === pin.id) ?? pin;
+        mapRef.current.flyTo({
+          center: [pin.lng, pin.lat],
+          zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+          speed: PIN_CLICK_SPEED,
+        });
         setDrawer(latest);
       });
 
@@ -216,7 +258,11 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       const el = makeSuggestionEl();
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+        m.flyTo({
+          center: [sug.lng, sug.lat],
+          zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+          speed: PIN_CLICK_SPEED,
+        });
         setDrawer(sug);
       });
       const marker = new mapboxgl.Marker({ element: el })
@@ -224,6 +270,18 @@ export default function Globe({ user, map, onMapChange, onExit }) {
         .addTo(m);
       suggestionMarkersRef.current[sug._sid] = marker;
     });
+
+    if (results.length > 0) {
+      const lngs = results.map((s) => s.lng);
+      const lats = results.map((s) => s.lat);
+      m.fitBounds(
+        [
+          [Math.min(...lngs), Math.min(...lats)],
+          [Math.max(...lngs), Math.max(...lats)],
+        ],
+        { maxZoom: 6, padding: 60, speed: 3 },
+      );
+    }
   }
 
   function handleSearchTabClose() {
@@ -242,7 +300,12 @@ export default function Globe({ user, map, onMapChange, onExit }) {
         const el = makeSuggestionEl();
         el.addEventListener("click", (e) => {
           e.stopPropagation();
-          m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+          if (m)
+            m.flyTo({
+              center: [sug.lng, sug.lat],
+              zoom: Math.max(m.getZoom(), 6),
+              speed: 3,
+            });
           setDrawer(sug);
         });
         const marker = new mapboxgl.Marker({ element: el })
@@ -255,7 +318,12 @@ export default function Globe({ user, map, onMapChange, onExit }) {
 
   function handleSuggestionClick(sug) {
     const m = mapRef.current;
-    if (m) m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+    if (m)
+      m.flyTo({
+        center: [sug.lng, sug.lat],
+        zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+        speed: PIN_CLICK_SPEED,
+      });
   }
 
   async function handleSaveSuggestion(suggestion, name, opts = {}) {
@@ -321,8 +389,10 @@ export default function Globe({ user, map, onMapChange, onExit }) {
         onCriteriaChange={handleCriteriaChange}
         mode={toolbarMode}
         onModeChange={(next) => {
-          if (toolbarMode === "search" && next !== "search") handleSearchTabClose();
-          if (next === "search" && toolbarMode !== "search") handleSearchTabOpen();
+          if (toolbarMode === "search" && next !== "search")
+            handleSearchTabClose();
+          if (next === "search" && toolbarMode !== "search")
+            handleSearchTabOpen();
           setToolbarMode(next);
         }}
         suggestions={suggestions}
