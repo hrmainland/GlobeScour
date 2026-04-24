@@ -32,6 +32,7 @@ async function forwardGeocode(query) {
   try {
     const res = await fetch(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?types=place,locality,region,poi&limit=5&access_token=${TOKEN}`,
+      // `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?&limit=5&access_token=${TOKEN}`,
     );
     const data = await res.json();
     return (data.features ?? []).map((f, i) => ({
@@ -80,6 +81,21 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       return [];
     }
   });
+  const [toolbarMode, setToolbarMode] = useState("browse");
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== "Escape") return;
+      if (modal) { setModal(null); return; }
+      if (drawer) { setDrawer(null); return; }
+      if (toolbarMode !== "browse") {
+        if (toolbarMode === "search") handleSearchTabClose();
+        setToolbarMode("browse");
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [modal, drawer, toolbarMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!TOKEN) {
@@ -101,7 +117,10 @@ export default function Globe({ user, map, onMapChange, onExit }) {
 
     m.on("moveend", () => {
       const { lng, lat } = m.getCenter();
-      localStorage.setItem(VIEW_KEY(map.id), JSON.stringify({ lng, lat, zoom: m.getZoom() }));
+      localStorage.setItem(
+        VIEW_KEY(map.id),
+        JSON.stringify({ lng, lat, zoom: m.getZoom() }),
+      );
     });
 
     m.on("click", async (e) => {
@@ -262,9 +281,14 @@ export default function Globe({ user, map, onMapChange, onExit }) {
     suggestionMarkersRef.current[suggestion._sid]?.remove();
     delete suggestionMarkersRef.current[suggestion._sid];
 
-    const updatedSuggestions = suggestions.filter((s) => s._sid !== suggestion._sid);
+    const updatedSuggestions = suggestions.filter(
+      (s) => s._sid !== suggestion._sid,
+    );
     setSuggestions(updatedSuggestions);
-    localStorage.setItem(SEARCH_KEY(map.id), JSON.stringify(updatedSuggestions));
+    localStorage.setItem(
+      SEARCH_KEY(map.id),
+      JSON.stringify(updatedSuggestions),
+    );
 
     if (opts.research) {
       const pendingPin = { ...pin, research_status: "pending" };
@@ -295,6 +319,12 @@ export default function Globe({ user, map, onMapChange, onExit }) {
         mapId={map.id}
         criteria={criteria}
         onCriteriaChange={handleCriteriaChange}
+        mode={toolbarMode}
+        onModeChange={(next) => {
+          if (toolbarMode === "search" && next !== "search") handleSearchTabClose();
+          if (next === "search" && toolbarMode !== "search") handleSearchTabOpen();
+          setToolbarMode(next);
+        }}
         suggestions={suggestions}
         activeSuggestionId={drawer?.isSuggestion ? drawer._sid : null}
         onSearch={handleSearch}
@@ -318,11 +348,21 @@ export default function Globe({ user, map, onMapChange, onExit }) {
           onRename={handleRenamePin}
           onSaveSuggestion={handleSaveSuggestion}
           onStatusChange={(id, newStatus) => {
-            setPins((prev) => prev.map((p) => p.id === id ? { ...p, research_status: newStatus } : p));
+            setPins((prev) =>
+              prev.map((p) =>
+                p.id === id ? { ...p, research_status: newStatus } : p,
+              ),
+            );
           }}
           onResearchDone={(result) => {
-            const updated = { ...drawer, research: result, research_status: "done" };
-            setPins((prev) => prev.map((p) => (p.id === drawer.id ? updated : p)));
+            const updated = {
+              ...drawer,
+              research: result,
+              research_status: "done",
+            };
+            setPins((prev) =>
+              prev.map((p) => (p.id === drawer.id ? updated : p)),
+            );
             setDrawer(updated);
           }}
           onDelete={(id) => {

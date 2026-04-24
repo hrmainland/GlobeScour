@@ -15,19 +15,17 @@ const inputStyle = {
 
 export default function ToolbarPanel({
   mapId, criteria, onCriteriaChange,
+  mode, onModeChange,
   suggestions, activeSuggestionId, onSearch, onSuggestionClick,
   onSearchTabClose, onSearchTabOpen,
 }) {
-  const [mode, setMode] = useState('browse')
   const [newItem, setNewItem] = useState('')
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const saveTimer = useRef(null)
 
   function switchMode(next) {
-    if (mode === 'search' && next !== 'search') onSearchTabClose?.()
-    if (next === 'search' && mode !== 'search') onSearchTabOpen?.()
-    setMode(next)
+    onModeChange?.(next)
   }
 
   async function persist(updated) {
