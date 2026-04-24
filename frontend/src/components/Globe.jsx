@@ -4,7 +4,6 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import PinModal from "./PinModal";
 import Drawer from "./Drawer";
 import ToolbarPanel from "./ToolbarPanel";
-
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 async function reverseGeocode(lng, lat) {
@@ -29,13 +28,13 @@ export default function Globe({ user, map, onMapChange }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef({});
+  const pinsRef = useRef([]);
   const [pins, setPins] = useState([]);
   const [modal, setModal] = useState(null);
   const [drawer, setDrawer] = useState(null);
   const [criteria, setCriteria] = useState(
     map.criteria ?? { items: [], vision: "" },
   );
-
   useEffect(() => {
     if (!TOKEN) {
       console.error("VITE_MAPBOX_TOKEN is not set");
@@ -76,6 +75,10 @@ export default function Globe({ user, map, onMapChange }) {
   }, [map.id]);
 
   useEffect(() => {
+    pinsRef.current = pins;
+  }, [pins]);
+
+  useEffect(() => {
     const m = mapRef.current;
     if (!m) return;
 
@@ -92,7 +95,8 @@ export default function Globe({ user, map, onMapChange }) {
       `;
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        setDrawer(pin);
+        const latest = pinsRef.current.find((p) => p.id === pin.id) ?? pin;
+        setDrawer(latest);
       });
 
       const marker = new mapboxgl.Marker({ element: el })
@@ -148,6 +152,9 @@ export default function Globe({ user, map, onMapChange }) {
           pin={drawer}
           criteria={criteria}
           onClose={() => setDrawer(null)}
+          onStatusChange={(id, newStatus) => {
+            setPins((prev) => prev.map((p) => p.id === id ? { ...p, research_status: newStatus } : p))
+          }}
           onResearchDone={(result) => {
             const updated = { ...drawer, research: result, research_status: "done" }
             setPins((prev) => prev.map((p) => (p.id === drawer.id ? updated : p)))

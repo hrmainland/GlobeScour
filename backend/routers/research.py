@@ -1,10 +1,13 @@
 import os
 import json
+import time
 import functools
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from bson import ObjectId
 import anthropic
 from db import locations, maps
+
+DEBUG_RESEARCH = os.environ.get("DEBUG_RESEARCH", "false").lower() == "true"
 
 
 def log_claude_request(func):
@@ -16,12 +19,14 @@ def log_claude_request(func):
         print(json.dumps(kwargs, indent=2, default=str))
         print("=" * 60 + "\n")
         return func(*args, **kwargs)
+
     return wrapper
 
 
-@log_claude_request
+# @log_claude_request
 def _claude_create(client, **kwargs):
     return client.messages.create(**kwargs)
+
 
 router = APIRouter(prefix="/api/locations")
 
@@ -54,7 +59,10 @@ def build_record_tool(criteria: list[str]) -> dict:
                 },
                 "ratings": {
                     "type": "object",
-                    "properties": {c: {"type": "string", "enum": ["green", "amber", "red"]} for c in criteria},
+                    "properties": {
+                        c: {"type": "string", "enum": ["green", "amber", "red"]}
+                        for c in criteria
+                    },
                     "required": criteria,
                 },
                 "ratings_notes": {
@@ -73,7 +81,9 @@ def build_record_tool(criteria: list[str]) -> dict:
     }
 
 
-def build_user_message(name: str, lat: float, lng: float, geocode_context: dict | None, criteria: list[str]) -> str:
+def build_user_message(
+    name: str, lat: float, lng: float, geocode_context: dict | None, criteria: list[str]
+) -> str:
     lines = [
         f"User-given name: {name}",
         f"Coordinates: {lat:.6f}, {lng:.6f}",
@@ -82,7 +92,9 @@ def build_user_message(name: str, lat: float, lng: float, geocode_context: dict 
         place_name = geocode_context.get("placeName")
         if place_name:
             lines.append(f"Full location: {place_name}")
-        ctx_levels = [c["text"] for c in geocode_context.get("context", []) if c.get("text")]
+        ctx_levels = [
+            c["text"] for c in geocode_context.get("context", []) if c.get("text")
+        ]
         if ctx_levels:
             lines.append(f"Geographic context: {', '.join(ctx_levels)}")
 
@@ -94,15 +106,27 @@ def build_user_message(name: str, lat: float, lng: float, geocode_context: dict 
     )
 
 
-def research_location(name: str, lat: float, lng: float, geocode_context: dict | None, criteria: list[str], vision: str) -> dict:
+def research_location(
+    name: str,
+    lat: float,
+    lng: float,
+    geocode_context: dict | None,
+    criteria: list[str],
+    vision: str,
+) -> dict:
     user_msg = build_user_message(name, lat, lng, geocode_context, criteria)
-    print("\n[research] geocode_context from DB:", json.dumps(geocode_context, indent=2))
+    print(
+        "\n[research] geocode_context from DB:", json.dumps(geocode_context, indent=2)
+    )
     print("[research] user message:\n", user_msg)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     messages = [{"role": "user", "content": user_msg}]
-    tools = [{"type": "web_search_20260209", "name": "web_search"}, build_record_tool(criteria)]
+    tools = [
+        {"type": "web_search_20260209", "name": "web_search"},
+        build_record_tool(criteria),
+    ]
 
     while True:
         response = _claude_create(
@@ -116,7 +140,12 @@ def research_location(name: str, lat: float, lng: float, geocode_context: dict |
         )
 
         record_block = next(
-            (b for b in response.content if getattr(b, "type", None) == "tool_use" and b.name == "record_research"),
+            (
+                b
+                for b in response.content
+                if getattr(b, "type", None) == "tool_use"
+                and b.name == "record_research"
+            ),
             None,
         )
         if record_block:
@@ -125,14 +154,53 @@ def research_location(name: str, lat: float, lng: float, geocode_context: dict |
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "pause_turn":
-            messages.append({
-                "role": "user",
-                "content": "Now call record_research with your findings.",
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Now call record_research with your findings.",
+                }
+            )
 
 
-@router.post("/{location_id}/research", status_code=200)
-def run_research(location_id: str):
+def _run_debug_task(oid: ObjectId, criteria: list[str]):
+    time.sleep(5)
+    ratings_cycle = ["green", "amber", "red"]
+    result = {
+        "summary": "Debug mode: simulated research result. This location scores well on most criteria based on mock web research conducted for testing purposes.",
+        "ratings": {c: ratings_cycle[i % 3] for i, c in enumerate(criteria)},
+        "ratings_notes": {c: f"Simulated note for {c}." for c in criteria},
+        "sources": ["https://example.com/mock-source-1", "https://example.com/mock-source-2"],
+    }
+    locations.update_one(
+        {"_id": oid},
+        {"$set": {"research": result, "research_status": "done"}},
+    )
+
+
+def _run_research_task(oid: ObjectId, doc: dict, criteria: list[str], vision: str):
+    try:
+        result = research_location(
+            name=doc["name"],
+            lat=doc["lat"],
+            lng=doc["lng"],
+            geocode_context=doc.get("geocode_context"),
+            criteria=criteria,
+            vision=vision,
+        )
+        locations.update_one(
+            {"_id": oid},
+            {"$set": {"research": result, "research_status": "done"}},
+        )
+    except Exception as e:
+        print(f"[research] background task failed: {e}")
+        locations.update_one(
+            {"_id": oid},
+            {"$set": {"research_status": "failed"}},
+        )
+
+
+@router.post("/{location_id}/research", status_code=202)
+def run_research(location_id: str, background_tasks: BackgroundTasks):
     try:
         oid = ObjectId(location_id)
     except Exception:
@@ -142,7 +210,6 @@ def run_research(location_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    # Pull criteria from the map this location belongs to
     criteria = DEFAULT_CRITERIA
     vision = ""
     map_id = doc.get("map_id")
@@ -150,23 +217,17 @@ def run_research(location_id: str):
         try:
             map_doc = maps.find_one({"_id": ObjectId(map_id)})
             if map_doc and map_doc.get("criteria"):
-                criteria = map_doc["criteria"].get("items", DEFAULT_CRITERIA) or DEFAULT_CRITERIA
+                criteria = (
+                    map_doc["criteria"].get("items", DEFAULT_CRITERIA)
+                    or DEFAULT_CRITERIA
+                )
                 vision = map_doc["criteria"].get("vision", "")
         except Exception:
             pass
 
-    result = research_location(
-        name=doc["name"],
-        lat=doc["lat"],
-        lng=doc["lng"],
-        geocode_context=doc.get("geocode_context"),
-        criteria=criteria,
-        vision=vision,
-    )
-
-    locations.update_one(
-        {"_id": oid},
-        {"$set": {"research": result, "research_status": "done"}},
-    )
-
-    return result
+    locations.update_one({"_id": oid}, {"$set": {"research_status": "pending"}})
+    if DEBUG_RESEARCH:
+        background_tasks.add_task(_run_debug_task, oid, criteria)
+    else:
+        background_tasks.add_task(_run_research_task, oid, doc, criteria, vision)
+    return {"status": "pending"}

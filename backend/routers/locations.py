@@ -27,6 +27,18 @@ def list_locations(map_id: str = Query(...)):
     return [serialize(doc) for doc in locations.find({"map_id": map_id})]
 
 
+@router.get("/{location_id}")
+def get_location(location_id: str):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    doc = locations.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Location not found")
+    return serialize(doc)
+
+
 @router.delete("/{location_id}", status_code=204)
 def delete_location(location_id: str):
     try:
