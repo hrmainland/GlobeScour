@@ -12,18 +12,19 @@ A collaborative trip-planning app. Users create named maps, drop pins on a globe
 
 ## Current state (as of April 2026)
 
-Phases 1–3 complete (see `markdown/PHASES.md`). Phase 4 (async research) is next. Multi-map support and dynamic criteria were added ahead of the Phase 7 schedule.
+Phases 1–4 complete. Multi-map support, dynamic criteria, async research, search with suggestion pins, and pin rename all shipped.
 
 ## Architecture
 
 ```
 UserSelector → MapSelector → Globe
-                                ├── ToolbarPanel (top-left, Browse/Criteria modes)
+                                ├── HamburgerMenu (top-right, back to map select)
+                                ├── ToolbarPanel (top-left, Browse/Search/Criteria modes)
                                 ├── PinModal (on globe click)
                                 └── Drawer (bottom sheet, pin detail + research)
 ```
 
-User state lives in `localStorage` (just a name string — no auth yet). Map state is fetched from the DB and held in `App`.
+User state lives in `localStorage` (just a name string — no auth yet). Map state is fetched from the DB and held in `App`. Last-viewed map and view position (per map) are also persisted to localStorage.
 
 ## MongoDB collections
 
@@ -56,7 +57,11 @@ User state lives in `localStorage` (just a name string — no auth yet). Map sta
 
 **The `record_research` tool schema is built dynamically** from `map.criteria.items`. Claude is given exactly the criteria the user defined — no hardcoded surf labels anywhere in the AI pipeline. See `backend/routers/research.py`.
 
-**Research is still synchronous** (Phase 3). The endpoint blocks until Claude finishes. Phase 4 will swap to `BackgroundTasks` with polling. Don't add async complexity until then.
+**Research is async** (Phase 4). `POST /api/locations/:id/research` returns 202 immediately and runs in a FastAPI `BackgroundTask`. The frontend polls `GET /api/locations/:id` every 3s until `research_status` is `"done"` or `"failed"`. `DEBUG_RESEARCH=True` in `.env` skips the Claude call and writes mock data after 5s.
+
+**Suggestion pins** are temporary red markers from Mapbox forward geocoding (Search tab). They live in Globe's local state and `localStorage` (`globescour_search_<mapId>`). Saving or researching a suggestion POSTs it to the DB and converts it to a real blue pin. Suggestion markers hide when leaving the Search tab and reappear when returning.
+
+**Pin rename** is available by clicking the name in the Drawer header. For saved pins this PATCHes the backend. For suggestion pins it triggers save-as-new-pin with the edited name.
 
 **No auth yet.** `created_by` is just a freetext name from `localStorage`. The plan calls for JWT auth eventually but the data model already supports multiple users.
 
@@ -70,8 +75,11 @@ PATCH  /api/maps/:id/criteria    update criteria { items, vision }
 
 GET    /api/locations?map_id=    list pins for a map
 POST   /api/locations            create pin (requires map_id)
+GET    /api/locations/:id        get single pin
+PATCH  /api/locations/:id        rename pin { name }
+DELETE /api/locations/:id        delete pin
 
-POST   /api/locations/:id/research   trigger Claude research (no body — pulls criteria from map)
+POST   /api/locations/:id/research   trigger Claude research (202, async — pulls criteria from map)
 ```
 
 ## AI research flow
@@ -86,11 +94,12 @@ POST   /api/locations/:id/research   trigger Claude research (no body — pulls 
 
 ## Frontend state flow
 
-- `App` owns `user` (string) and `map` (full map object including criteria)
-- `Globe` owns `pins` array and local `criteria` state (initialised from `map.criteria`)
-- `ToolbarPanel` edits criteria optimistically — debounced PATCH to DB after 600ms
-- `Globe` passes criteria into `Drawer` on pin open
+- `App` owns `user` (string) and `map` (full map object including criteria). Restores last-viewed map from `globescour_last_map_id` on mount.
+- `Globe` owns `pins` array, `suggestions` array, and local `criteria` state (initialised from `map.criteria`)
+- `ToolbarPanel` has Browse / Search / Criteria tabs. Criteria edits are debounced 600ms to PATCH. Search submits forward geocoding queries and calls `onSearch` / `onSuggestionClick` / `onSearchTabClose` / `onSearchTabOpen` callbacks.
+- `Globe` passes criteria and suggestion callbacks into `ToolbarPanel`; passes `onRename` and `onSaveSuggestion` into `Drawer`
 - `Drawer` calls `onResearchDone` after research completes — `Globe` updates its `pins` array and the open drawer state so re-opening a pin in the same session shows results
+- `Drawer` has a `key={pin.id ?? pin._sid}` so it remounts cleanly when switching between suggestion and saved pin
 
 ## Things to know
 

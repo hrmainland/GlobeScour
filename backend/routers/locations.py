@@ -17,6 +17,10 @@ class LocationIn(BaseModel):
     geocode_context: dict | None = None
 
 
+class LocationUpdate(BaseModel):
+    name: str
+
+
 def serialize(doc) -> dict:
     doc["id"] = str(doc.pop("_id"))
     return doc
@@ -36,6 +40,19 @@ def get_location(location_id: str):
     doc = locations.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Location not found")
+    return serialize(doc)
+
+
+@router.patch("/{location_id}")
+def update_location(location_id: str, body: LocationUpdate):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    result = locations.update_one({"_id": oid}, {"$set": {"name": body.name}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Location not found")
+    doc = locations.find_one({"_id": oid})
     return serialize(doc)
 
 

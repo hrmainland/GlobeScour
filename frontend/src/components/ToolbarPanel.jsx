@@ -2,11 +2,33 @@ import { useState, useRef } from 'react'
 
 const VISION_MAX = 300
 
-export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
+const inputStyle = {
+  flex: 1,
+  padding: '6px 10px',
+  borderRadius: 5,
+  border: '1px solid rgba(255,255,255,0.15)',
+  background: 'rgba(255,255,255,0.06)',
+  color: '#fff',
+  fontSize: 12,
+  outline: 'none',
+}
+
+export default function ToolbarPanel({
+  mapId, criteria, onCriteriaChange,
+  suggestions, activeSuggestionId, onSearch, onSuggestionClick,
+  onSearchTabClose, onSearchTabOpen,
+}) {
   const [mode, setMode] = useState('browse')
   const [newItem, setNewItem] = useState('')
   const [saving, setSaving] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const saveTimer = useRef(null)
+
+  function switchMode(next) {
+    if (mode === 'search' && next !== 'search') onSearchTabClose?.()
+    if (next === 'search' && mode !== 'search') onSearchTabOpen?.()
+    setMode(next)
+  }
 
   async function persist(updated) {
     clearTimeout(saveTimer.current)
@@ -42,12 +64,20 @@ export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
     update({ ...criteria, vision: vision.slice(0, VISION_MAX) })
   }
 
+  function handleSearchSubmit(e) {
+    e.preventDefault()
+    const q = searchQuery.trim()
+    if (q) onSearch?.(q)
+  }
+
   const panelBase = {
     position: 'fixed',
     top: 16, left: 16,
     zIndex: 800,
     fontFamily: "'Inter Tight', Inter, sans-serif",
   }
+
+  const panelOpen = mode === 'criteria' || mode === 'search'
 
   const tabRow = {
     display: 'flex',
@@ -56,7 +86,7 @@ export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
     backdropFilter: 'blur(16px)',
     WebkitBackdropFilter: 'blur(16px)',
     border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: mode === 'criteria' ? '8px 8px 0 0' : 8,
+    borderRadius: panelOpen ? '8px 8px 0 0' : 8,
     padding: 4,
   }
 
@@ -76,34 +106,102 @@ export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
     }
   }
 
+  const panelBody = {
+    background: 'rgba(10,10,28,0.82)',
+    backdropFilter: 'blur(24px)',
+    WebkitBackdropFilter: 'blur(24px)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderTop: 'none',
+    borderRadius: '0 0 8px 8px',
+    padding: '16px 16px 18px',
+    width: 280,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    color: '#fff',
+  }
+
+  const labelStyle = {
+    fontSize: 10,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.35)',
+    fontFamily: "'JetBrains Mono', monospace",
+    marginBottom: 8,
+  }
+
   return (
     <div style={panelBase}>
       <div style={tabRow}>
-        <button style={tabBtn('browse')} onClick={() => setMode('browse')}>Browse</button>
-        <button style={tabBtn('criteria')} onClick={() => setMode('criteria')}>Criteria</button>
+        <button style={tabBtn('browse')} onClick={() => switchMode('browse')}>Browse</button>
+        <button style={tabBtn('search')} onClick={() => switchMode('search')}>Search</button>
+        <button style={tabBtn('criteria')} onClick={() => switchMode('criteria')}>Criteria</button>
       </div>
 
-      {mode === 'criteria' && (
-        <div style={{
-          background: 'rgba(10,10,28,0.82)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          borderTop: 'none',
-          borderRadius: '0 0 8px 8px',
-          padding: '16px 16px 18px',
-          width: 280,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
-          color: '#fff',
-        }}>
+      {mode === 'search' && (
+        <div style={panelBody}>
+          <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search destinations…"
+              autoFocus
+              style={inputStyle}
+            />
+            <button type="submit" style={{
+              padding: '6px 10px',
+              borderRadius: 5,
+              border: '1px solid rgba(255,255,255,0.15)',
+              background: 'rgba(255,255,255,0.08)',
+              color: 'rgba(255,255,255,0.7)',
+              fontSize: 12,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}>
+              Go
+            </button>
+          </form>
 
+          {suggestions.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {suggestions.map(sug => {
+                const country = sug.context.find(c => c.id?.startsWith('country.'))?.text
+                const region = sug.context.find(c => c.id?.startsWith('region.'))?.text
+                const geo = [region, country].filter(Boolean).join(', ')
+                return (
+                  <div
+                    key={sug._sid}
+                    onClick={() => onSuggestionClick?.(sug)}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      transition: 'background 0.1s',
+                      background: activeSuggestionId === sug._sid ? 'rgba(239,68,68,0.1)' : 'transparent',
+                      borderLeft: activeSuggestionId === sug._sid ? '2px solid rgba(239,68,68,0.5)' : '2px solid transparent',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = activeSuggestionId === sug._sid ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)'}
+                    onMouseLeave={e => e.currentTarget.style.background = activeSuggestionId === sug._sid ? 'rgba(239,68,68,0.1)' : 'transparent'}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{sug.name}</div>
+                    {geo && (
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {geo}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'criteria' && (
+        <div style={panelBody}>
           {/* Criteria chips */}
           <div>
-            <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.35)', fontFamily: "'JetBrains Mono', monospace", marginBottom: 8 }}>
-              Criteria
-            </div>
+            <div style={labelStyle}>Criteria</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
               {criteria.items.map(item => (
                 <span key={item} style={{
@@ -132,16 +230,7 @@ export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
                 value={newItem}
                 onChange={e => setNewItem(e.target.value)}
                 placeholder="Add criterion…"
-                style={{
-                  flex: 1,
-                  padding: '6px 10px',
-                  borderRadius: 5,
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  background: 'rgba(255,255,255,0.06)',
-                  color: '#fff',
-                  fontSize: 12,
-                  outline: 'none',
-                }}
+                style={inputStyle}
               />
               <button type="submit" style={{
                 padding: '6px 10px',
@@ -159,9 +248,7 @@ export default function ToolbarPanel({ mapId, criteria, onCriteriaChange }) {
 
           {/* Vision */}
           <div>
-            <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.35)', fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
-              Trip vision
-            </div>
+            <div style={labelStyle}>Trip vision</div>
             <textarea
               value={criteria.vision}
               onChange={e => setVision(e.target.value)}

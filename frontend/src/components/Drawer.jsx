@@ -27,7 +27,7 @@ const TRAFFIC_COLORS = {
   },
 };
 
-const INITIAL_PX = () => window.innerHeight * 0.5;
+const INITIAL_PX = () => window.innerHeight * 0.45;
 
 function CriterionCard({ criterion, rating, note }) {
   const c = TRAFFIC_COLORS[rating] ?? TRAFFIC_COLORS.none;
@@ -93,11 +93,15 @@ export default function Drawer({
   onStatusChange,
   onResearchDone,
   onDelete,
+  onRename,
+  onSaveSuggestion,
 }) {
   const [research, setResearch] = useState(pin.research ?? null);
   const [status, setStatus] = useState(pin.research_status ?? "none");
   const [deleting, setDeleting] = useState(false);
   const [heightPx, setHeightPx] = useState(INITIAL_PX);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(pin.name ?? "");
 
   const drawerRef = useRef(null);
   const contentRef = useRef(null);
@@ -186,6 +190,20 @@ export default function Drawer({
     };
   }, []);
 
+  function handleNameCommit() {
+    setEditingName(false);
+    const trimmed = nameValue.trim();
+    if (!trimmed) {
+      setNameValue(pin.name ?? "");
+      return;
+    }
+    if (pin.isSuggestion) {
+      onSaveSuggestion?.(pin, trimmed);
+    } else if (trimmed !== pin.name) {
+      onRename?.(pin.id, trimmed);
+    }
+  }
+
   async function handleDelete() {
     setDeleting(true);
     await fetch(`/api/locations/${pin.id}`, { method: "DELETE" });
@@ -203,25 +221,25 @@ export default function Drawer({
   }
 
   useEffect(() => {
-    if (status !== 'pending') return
+    if (status !== "pending") return;
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(`/api/locations/${pin.id}`)
-        if (!res.ok) return
-        const data = await res.json()
-        const newStatus = data.research_status
-        if (newStatus === 'done') {
-          setStatus('done')
-          setResearch(data.research)
-          onResearchDone(data.research)
+        const res = await fetch(`/api/locations/${pin.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const newStatus = data.research_status;
+        if (newStatus === "done") {
+          setStatus("done");
+          setResearch(data.research);
+          onResearchDone(data.research);
         }
-        if (newStatus === 'failed') setStatus('failed')
+        if (newStatus === "failed") setStatus("failed");
       } catch {
         // network error — skip this tick, try again next
       }
-    }, 3000)
-    return () => clearInterval(intervalId)
-  }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -284,7 +302,7 @@ export default function Drawer({
               borderBottom: "1px solid rgba(255,255,255,0.07)",
             }}
           >
-            <div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
                   fontSize: 11,
@@ -295,29 +313,65 @@ export default function Drawer({
                   marginBottom: 4,
                 }}
               >
-                {pin.location_type === "coordinate"
-                  ? `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`
-                  : pin.location_type}
+                {pin.isSuggestion
+                  ? "suggested"
+                  : pin.location_type === "coordinate"
+                    ? `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`
+                    : pin.location_type}
               </div>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 22,
-                  fontWeight: 700,
-                  lineHeight: 1.2,
-                }}
-              >
-                {pin.name}
-              </h2>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "rgba(255,255,255,0.35)",
-                  marginTop: 4,
-                }}
-              >
-                Added by {pin.created_by}
-              </div>
+              {editingName ? (
+                <input
+                  value={nameValue}
+                  onChange={(e) => setNameValue(e.target.value)}
+                  onBlur={handleNameCommit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.target.blur();
+                    if (e.key === "Escape") {
+                      setNameValue(pin.name ?? "");
+                      setEditingName(false);
+                    }
+                  }}
+                  autoFocus
+                  style={{
+                    margin: 0,
+                    fontSize: 22,
+                    fontWeight: 700,
+                    lineHeight: 1.2,
+                    background: "transparent",
+                    border: "none",
+                    borderBottom: "1px solid rgba(255,255,255,0.3)",
+                    color: "#fff",
+                    outline: "none",
+                    width: "100%",
+                    fontFamily: "inherit",
+                    padding: 0,
+                  }}
+                />
+              ) : (
+                <h2
+                  onClick={() => setEditingName(true)}
+                  style={{
+                    margin: 0,
+                    fontSize: 22,
+                    fontWeight: 700,
+                    lineHeight: 1.2,
+                    cursor: "text",
+                  }}
+                >
+                  {nameValue}
+                </h2>
+              )}
+              {!pin.isSuggestion && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.35)",
+                    marginTop: 4,
+                  }}
+                >
+                  Added by {pin.created_by}
+                </div>
+              )}
             </div>
             <div
               style={{
@@ -327,23 +381,25 @@ export default function Drawer({
                 flexShrink: 0,
               }}
             >
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "rgba(239,68,68,0.5)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  padding: "4px 6px",
-                  lineHeight: 1,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                {deleting ? "deleting…" : "delete"}
-              </button>
+              {!pin.isSuggestion && (
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "rgba(239,68,68,0.5)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    padding: "4px 6px",
+                    lineHeight: 1,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  {deleting ? "deleting…" : "delete"}
+                </button>
+              )}
               <button
                 onClick={onClose}
                 style={{
@@ -368,7 +424,7 @@ export default function Drawer({
           ref={contentRef}
           style={{ flex: 1, overflowY: "auto", padding: "20px 24px 40px" }}
         >
-          {status === "none" && (
+          {pin.isSuggestion ? (
             <div
               style={{
                 display: "flex",
@@ -377,16 +433,16 @@ export default function Drawer({
                 maxWidth: 480,
               }}
             >
-              {criteriaItems.length > 0 && (
+              {pin.placeName && (
                 <p
                   style={{
                     margin: 0,
                     fontSize: 13,
-                    color: "rgba(255,255,255,0.35)",
+                    color: "rgba(255,255,255,0.4)",
                     lineHeight: 1.5,
                   }}
                 >
-                  Will rate: {criteriaItems.join(" · ")}
+                  {pin.placeName}
                 </p>
               )}
               <p
@@ -397,28 +453,100 @@ export default function Drawer({
                   lineHeight: 1.6,
                 }}
               >
-                Claude will search the web and rate this spot across your
-                criteria.
+                Save this spot to your map, or research it straight away.
               </p>
-              <button
-                onClick={handleResearch}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => onSaveSuggestion?.(pin, nameValue)}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: 2,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Save pin
+                </button>
+                <button
+                  onClick={() =>
+                    onSaveSuggestion?.(pin, nameValue, { research: true })
+                  }
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: 2,
+                    border: "1px solid oklch(0.82 0.13 200)",
+                    background: "oklch(0.82 0.13 200 / 0.12)",
+                    color: "oklch(0.82 0.13 200)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Research this spot
+                </button>
+              </div>
+            </div>
+          ) : (
+            status === "none" && (
+              <div
                 style={{
-                  alignSelf: "flex-start",
-                  padding: "12px 24px",
-                  borderRadius: 2,
-                  border: "1px solid oklch(0.82 0.13 200)",
-                  background: "oklch(0.82 0.13 200 / 0.12)",
-                  color: "oklch(0.82 0.13 200)",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  letterSpacing: "0.04em",
-                  fontFamily: "'JetBrains Mono', monospace",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  maxWidth: 480,
                 }}
               >
-                Research this spot
-              </button>
-            </div>
+                {criteriaItems.length > 0 && (
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: 13,
+                      color: "rgba(255,255,255,0.35)",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Will rate: {criteriaItems.join(" · ")}
+                  </p>
+                )}
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 14,
+                    color: "rgba(255,255,255,0.55)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Claude will search the web and rate this spot across your
+                  criteria.
+                </p>
+                <button
+                  onClick={handleResearch}
+                  style={{
+                    alignSelf: "flex-start",
+                    padding: "12px 24px",
+                    borderRadius: 2,
+                    border: "1px solid oklch(0.82 0.13 200)",
+                    background: "oklch(0.82 0.13 200 / 0.12)",
+                    color: "oklch(0.82 0.13 200)",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Research this spot
+                </button>
+              </div>
+            )
           )}
 
           {status === "pending" && (

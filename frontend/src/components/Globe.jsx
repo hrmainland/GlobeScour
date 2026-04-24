@@ -5,7 +5,10 @@ import PinModal from "./PinModal";
 import Drawer from "./Drawer";
 import ToolbarPanel from "./ToolbarPanel";
 import HamburgerMenu from "./HamburgerMenu";
+
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
+const SEARCH_KEY = (mapId) => `globescour_search_${mapId}`;
 
 async function reverseGeocode(lng, lat) {
   try {
@@ -25,19 +28,59 @@ async function reverseGeocode(lng, lat) {
   }
 }
 
-const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
+async function forwardGeocode(query) {
+  try {
+    const res = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?types=place,locality,region,poi&limit=5&access_token=${TOKEN}`,
+    );
+    const data = await res.json();
+    return (data.features ?? []).map((f, i) => ({
+      _sid: `suggest_${i}_${Date.now()}`,
+      name: f.text,
+      placeName: f.place_name,
+      lat: f.center[1],
+      lng: f.center[0],
+      context: f.context ?? [],
+      isSuggestion: true,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function makeSuggestionEl() {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    width: 14px; height: 14px;
+    background: #ef4444; border-radius: 50%;
+    border: 2px solid #fff;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0,0,0,0.4);
+  `;
+  return el;
+}
 
 export default function Globe({ user, map, onMapChange, onExit }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef({});
   const pinsRef = useRef([]);
+  const suggestionMarkersRef = useRef({});
+
   const [pins, setPins] = useState([]);
   const [modal, setModal] = useState(null);
   const [drawer, setDrawer] = useState(null);
   const [criteria, setCriteria] = useState(
     map.criteria ?? { items: [], vision: "" },
   );
+  const [suggestions, setSuggestions] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SEARCH_KEY(map.id)) ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+
   useEffect(() => {
     if (!TOKEN) {
       console.error("VITE_MAPBOX_TOKEN is not set");
@@ -117,7 +160,6 @@ export default function Globe({ user, map, onMapChange, onExit }) {
   }, [pins]);
 
   async function handleSavePin(name) {
-    console.log("[pin save] geocode_context:", JSON.stringify(modal.geocodeContext, null, 2))
     const res = await fetch("/api/locations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -141,6 +183,110 @@ export default function Globe({ user, map, onMapChange, onExit }) {
     onMapChange({ ...map, criteria: updated });
   }
 
+  async function handleSearch(query) {
+    Object.values(suggestionMarkersRef.current).forEach((m) => m.remove());
+    suggestionMarkersRef.current = {};
+
+    const results = await forwardGeocode(query);
+    setSuggestions(results);
+    localStorage.setItem(SEARCH_KEY(map.id), JSON.stringify(results));
+
+    const m = mapRef.current;
+    if (!m) return;
+    results.forEach((sug) => {
+      const el = makeSuggestionEl();
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+        setDrawer(sug);
+      });
+      const marker = new mapboxgl.Marker({ element: el })
+        .setLngLat([sug.lng, sug.lat])
+        .addTo(m);
+      suggestionMarkersRef.current[sug._sid] = marker;
+    });
+  }
+
+  function handleSearchTabClose() {
+    Object.values(suggestionMarkersRef.current).forEach((marker) => {
+      marker.getElement().style.display = "none";
+    });
+  }
+
+  function handleSearchTabOpen() {
+    const m = mapRef.current;
+    if (!m) return;
+    suggestions.forEach((sug) => {
+      if (suggestionMarkersRef.current[sug._sid]) {
+        suggestionMarkersRef.current[sug._sid].getElement().style.display = "";
+      } else {
+        const el = makeSuggestionEl();
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+          setDrawer(sug);
+        });
+        const marker = new mapboxgl.Marker({ element: el })
+          .setLngLat([sug.lng, sug.lat])
+          .addTo(m);
+        suggestionMarkersRef.current[sug._sid] = marker;
+      }
+    });
+  }
+
+  function handleSuggestionClick(sug) {
+    const m = mapRef.current;
+    if (m) m.flyTo({ center: [sug.lng, sug.lat], zoom: 6, speed: 3 });
+  }
+
+  async function handleSaveSuggestion(suggestion, name, opts = {}) {
+    const res = await fetch("/api/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        lat: suggestion.lat,
+        lng: suggestion.lng,
+        created_by: user,
+        map_id: map.id,
+        location_type: "named",
+        geocode_context: {
+          name: suggestion.name,
+          placeName: suggestion.placeName,
+          context: suggestion.context,
+        },
+      }),
+    });
+    const pin = await res.json();
+
+    suggestionMarkersRef.current[suggestion._sid]?.remove();
+    delete suggestionMarkersRef.current[suggestion._sid];
+
+    const updatedSuggestions = suggestions.filter((s) => s._sid !== suggestion._sid);
+    setSuggestions(updatedSuggestions);
+    localStorage.setItem(SEARCH_KEY(map.id), JSON.stringify(updatedSuggestions));
+
+    if (opts.research) {
+      const pendingPin = { ...pin, research_status: "pending" };
+      setPins((prev) => [...prev, pendingPin]);
+      setDrawer(pendingPin);
+      await fetch(`/api/locations/${pin.id}/research`, { method: "POST" });
+    } else {
+      setPins((prev) => [...prev, pin]);
+      setDrawer(pin);
+    }
+  }
+
+  async function handleRenamePin(id, name) {
+    await fetch(`/api/locations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    setPins((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
+    setDrawer((prev) => (prev && prev.id === id ? { ...prev, name } : prev));
+  }
+
   return (
     <>
       <div ref={containerRef} style={{ width: "100%", height: "100vh" }} />
@@ -149,6 +295,12 @@ export default function Globe({ user, map, onMapChange, onExit }) {
         mapId={map.id}
         criteria={criteria}
         onCriteriaChange={handleCriteriaChange}
+        suggestions={suggestions}
+        activeSuggestionId={drawer?.isSuggestion ? drawer._sid : null}
+        onSearch={handleSearch}
+        onSuggestionClick={handleSuggestionClick}
+        onSearchTabClose={handleSearchTabClose}
+        onSearchTabOpen={handleSearchTabOpen}
       />
       {modal && (
         <PinModal
@@ -159,22 +311,25 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       )}
       {drawer && (
         <Drawer
+          key={drawer.id ?? drawer._sid}
           pin={drawer}
           criteria={criteria}
           onClose={() => setDrawer(null)}
+          onRename={handleRenamePin}
+          onSaveSuggestion={handleSaveSuggestion}
           onStatusChange={(id, newStatus) => {
-            setPins((prev) => prev.map((p) => p.id === id ? { ...p, research_status: newStatus } : p))
+            setPins((prev) => prev.map((p) => p.id === id ? { ...p, research_status: newStatus } : p));
           }}
           onResearchDone={(result) => {
-            const updated = { ...drawer, research: result, research_status: "done" }
-            setPins((prev) => prev.map((p) => (p.id === drawer.id ? updated : p)))
-            setDrawer(updated)
+            const updated = { ...drawer, research: result, research_status: "done" };
+            setPins((prev) => prev.map((p) => (p.id === drawer.id ? updated : p)));
+            setDrawer(updated);
           }}
           onDelete={(id) => {
-            markersRef.current[id]?.remove()
-            delete markersRef.current[id]
-            setPins((prev) => prev.filter((p) => p.id !== id))
-            setDrawer(null)
+            markersRef.current[id]?.remove();
+            delete markersRef.current[id];
+            setPins((prev) => prev.filter((p) => p.id !== id));
+            setDrawer(null);
           }}
         />
       )}

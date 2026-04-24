@@ -9,3 +9,5 @@ Nice to have:
 - Scroll to bottom of drawer closes it (remove all the pixel stuff)
 - Explain the app in the research prompt such that the AI can ditch junk locations
 - 'Update' button in criteria menu
+- No default criteria (force creation on map creation, cant go to 0)
+- Use escape to exit current window
