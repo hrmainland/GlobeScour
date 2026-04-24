@@ -18,11 +18,16 @@ export default function ToolbarPanel({
   mode, onModeChange,
   suggestions, activeSuggestionId, onSearch, onSuggestionClick,
   onSearchTabClose, onSearchTabOpen,
+  discoverSpots, discoverRegion, activeDiscoverSpotId, onDiscover, onDiscoverSuggestionClick,
 }) {
   const [newItem, setNewItem] = useState('')
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  const [discoverMode, setDiscoverMode] = useState('spots')
+  const [discoverRegionInput, setDiscoverRegionInput] = useState('')
+  const [discoverInstructions, setDiscoverInstructions] = useState('')
+  const [discovering, setDiscovering] = useState(false)
   const saveTimer = useRef(null)
 
   function switchMode(next) {
@@ -72,6 +77,17 @@ export default function ToolbarPanel({
     setSearching(false)
   }
 
+  async function handleDiscoverSubmit(e) {
+    e.preventDefault()
+    setDiscovering(true)
+    await onDiscover?.({
+      mode: discoverMode,
+      region: discoverRegionInput.trim(),
+      instructions: discoverInstructions.trim(),
+    })
+    setDiscovering(false)
+  }
+
   const panelBase = {
     position: 'fixed',
     top: 16, left: 16,
@@ -79,7 +95,7 @@ export default function ToolbarPanel({
     fontFamily: "'Inter Tight', Inter, sans-serif",
   }
 
-  const panelOpen = mode === 'criteria' || mode === 'search'
+  const panelOpen = mode === 'criteria' || mode === 'search' || mode === 'discover'
 
   const tabRow = {
     display: 'flex',
@@ -95,7 +111,7 @@ export default function ToolbarPanel({
   function tabBtn(m) {
     const active = mode === m
     return {
-      padding: '5px 14px',
+      padding: '5px 10px',
       borderRadius: 5,
       border: 'none',
       background: active ? 'rgba(255,255,255,0.12)' : 'transparent',
@@ -117,6 +133,8 @@ export default function ToolbarPanel({
     borderRadius: '0 0 8px 8px',
     padding: '16px 16px 18px',
     width: 280,
+    maxHeight: 'calc(100vh - 120px)',
+    overflowY: 'auto',
     display: 'flex',
     flexDirection: 'column',
     gap: 14,
@@ -137,6 +155,7 @@ export default function ToolbarPanel({
       <div style={tabRow}>
         <button style={tabBtn('browse')} onClick={() => switchMode('browse')}>Browse</button>
         <button style={tabBtn('search')} onClick={() => switchMode('search')}>Search</button>
+        <button style={tabBtn('discover')} onClick={() => switchMode('discover')}>Discover</button>
         <button style={tabBtn('criteria')} onClick={() => switchMode('criteria')}>Criteria</button>
       </div>
 
@@ -212,6 +231,154 @@ export default function ToolbarPanel({
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {mode === 'discover' && (
+        <div style={panelBody}>
+          {/* Regions / Spots sub-toggle */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {['spots', 'regions'].map(m => (
+              <button
+                key={m}
+                onClick={() => setDiscoverMode(m)}
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: 5,
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: discoverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent',
+                  color: discoverMode === m ? '#fff' : 'rgba(255,255,255,0.45)',
+                  fontSize: 12,
+                  fontWeight: discoverMode === m ? 600 : 400,
+                  cursor: 'pointer',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                {m.charAt(0).toUpperCase() + m.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleDiscoverSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div style={labelStyle}>Region (optional)</div>
+              <input
+                value={discoverRegionInput}
+                onChange={e => setDiscoverRegionInput(e.target.value)}
+                placeholder="e.g. Morocco, Southeast Asia…"
+                style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <div style={labelStyle}>Additional focus (optional)</div>
+              <textarea
+                value={discoverInstructions}
+                onChange={e => setDiscoverInstructions(e.target.value)}
+                placeholder="e.g. remote, budget-friendly, avoid crowds…"
+                rows={2}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '6px 10px',
+                  borderRadius: 5,
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: '#fff',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  resize: 'vertical',
+                  outline: 'none',
+                  fontFamily: 'inherit',
+                }}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={discovering}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 5,
+                border: '1px solid rgba(255,255,255,0.15)',
+                background: discovering ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.08)',
+                color: discovering ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)',
+                fontSize: 12,
+                cursor: discovering ? 'default' : 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.04em',
+              }}
+            >
+              {discovering ? 'Discovering…' : 'Discover'}
+            </button>
+          </form>
+
+          {discovering && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px' }}>
+              <div style={{
+                width: 14, height: 14, borderRadius: '50%',
+                border: '2px solid rgba(255,255,255,0.1)',
+                borderTopColor: 'rgba(255,255,255,0.5)',
+                animation: 'spin 0.8s linear infinite',
+                flexShrink: 0,
+              }} />
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono', monospace" }}>
+                Asking Claude…
+              </span>
+              <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+            </div>
+          )}
+
+          {/* Regions result */}
+          {!discovering && discoverMode === 'regions' && discoverRegion && (
+            <p style={{
+              margin: 0,
+              fontSize: 13,
+              color: 'rgba(255,255,255,0.65)',
+              lineHeight: 1.65,
+            }}>
+              {discoverRegion.summary}
+            </p>
+          )}
+
+          {/* Spots result */}
+          {!discovering && discoverMode === 'spots' && discoverSpots && discoverSpots.length > 0 && (() => {
+            const found = discoverSpots.filter(s => !s._notFound)
+            const notFound = discoverSpots.filter(s => s._notFound)
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {found.map(sug => (
+                  <div
+                    key={sug._sid}
+                    onClick={() => onDiscoverSuggestionClick?.(sug)}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      transition: 'background 0.1s',
+                      background: activeDiscoverSpotId === sug._sid ? 'rgba(239,68,68,0.1)' : 'transparent',
+                      borderLeft: activeDiscoverSpotId === sug._sid ? '2px solid rgba(239,68,68,0.5)' : '2px solid transparent',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = activeDiscoverSpotId === sug._sid ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)'}
+                    onMouseLeave={e => e.currentTarget.style.background = activeDiscoverSpotId === sug._sid ? 'rgba(239,68,68,0.1)' : 'transparent'}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{sug.name}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2, lineHeight: 1.4 }}>
+                      {sug.why}
+                    </div>
+                  </div>
+                ))}
+                {notFound.length > 0 && (
+                  <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 6, background: 'rgba(255,255,255,0.04)' }}>
+                    <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
+                      Couldn't place on map
+                    </div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>
+                      {notFound.map(s => s.name).join(', ')}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 

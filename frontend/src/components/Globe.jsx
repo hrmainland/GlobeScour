@@ -11,6 +11,7 @@ const PIN_CLICK_MIN_ZOOM = 6;
 const PIN_CLICK_SPEED = 4;
 const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
 const SEARCH_KEY = (mapId) => `globescour_search_${mapId}`;
+const DISCOVER_KEY = (mapId) => `globescour_discover_${mapId}`;
 
 async function reverseGeocode(lng, lat) {
   try {
@@ -98,6 +99,7 @@ export default function Globe({ user, map, onMapChange, onExit }) {
   const markersRef = useRef({});
   const pinsRef = useRef([]);
   const suggestionMarkersRef = useRef({});
+  const discoverMarkersRef = useRef({});
 
   const [pins, setPins] = useState([]);
   const [modal, setModal] = useState(null);
@@ -113,6 +115,14 @@ export default function Globe({ user, map, onMapChange, onExit }) {
     }
   });
   const [toolbarMode, setToolbarMode] = useState("browse");
+  const [discoverSpots, setDiscoverSpots] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(DISCOVER_KEY(map.id)) ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [discoverRegion, setDiscoverRegion] = useState(null);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -127,6 +137,7 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       }
       if (toolbarMode !== "browse") {
         if (toolbarMode === "search") handleSearchTabClose();
+        if (toolbarMode === "discover") handleDiscoverTabClose();
         setToolbarMode("browse");
       }
     }
@@ -316,6 +327,110 @@ export default function Globe({ user, map, onMapChange, onExit }) {
     });
   }
 
+  async function handleDiscover(params) {
+    Object.values(discoverMarkersRef.current).forEach((m) => m.remove());
+    discoverMarkersRef.current = {};
+
+    const res = await fetch("/api/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: params.mode,
+        region: params.region,
+        instructions: params.instructions,
+        criteria: criteria.items,
+        vision: criteria.vision,
+      }),
+    });
+    const data = await res.json();
+
+    if (data.mode === "regions") {
+      setDiscoverRegion({ summary: data.summary });
+      setDiscoverSpots([]);
+      localStorage.setItem(DISCOVER_KEY(map.id), JSON.stringify([]));
+      return;
+    }
+
+    setDiscoverRegion(null);
+    const ts = Date.now();
+    const found = (data.found ?? []).map((s, i) => ({
+      ...s,
+      _sid: `discover_${i}_${ts}`,
+    }));
+    const notFound = (data.not_found ?? []).map((name, i) => ({
+      name,
+      _notFound: true,
+      _sid: `discover_nf_${i}_${ts}`,
+    }));
+    const all = [...found, ...notFound];
+    setDiscoverSpots(all);
+    localStorage.setItem(DISCOVER_KEY(map.id), JSON.stringify(all));
+
+    const m = mapRef.current;
+    if (!m) return;
+    found.forEach((sug) => {
+      const el = makeSuggestionEl();
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        mapRef.current.flyTo({
+          center: [sug.lng, sug.lat],
+          zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+          speed: PIN_CLICK_SPEED,
+        });
+        setDrawer(sug);
+      });
+      const marker = new mapboxgl.Marker({ element: el })
+        .setLngLat([sug.lng, sug.lat])
+        .addTo(m);
+      discoverMarkersRef.current[sug._sid] = marker;
+    });
+
+    if (found.length > 0) {
+      const lngs = found.map((s) => s.lng);
+      const lats = found.map((s) => s.lat);
+      m.fitBounds(
+        [
+          [Math.min(...lngs), Math.min(...lats)],
+          [Math.max(...lngs), Math.max(...lats)],
+        ],
+        { maxZoom: 6, padding: 60, speed: 3 },
+      );
+    }
+  }
+
+  function handleDiscoverTabClose() {
+    Object.values(discoverMarkersRef.current).forEach((marker) => {
+      marker.getElement().style.display = "none";
+    });
+  }
+
+  function handleDiscoverTabOpen() {
+    const m = mapRef.current;
+    if (!m) return;
+    discoverSpots
+      .filter((s) => !s._notFound)
+      .forEach((sug) => {
+        if (discoverMarkersRef.current[sug._sid]) {
+          discoverMarkersRef.current[sug._sid].getElement().style.display = "";
+        } else {
+          const el = makeSuggestionEl();
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            mapRef.current.flyTo({
+              center: [sug.lng, sug.lat],
+              zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+              speed: PIN_CLICK_SPEED,
+            });
+            setDrawer(sug);
+          });
+          const marker = new mapboxgl.Marker({ element: el })
+            .setLngLat([sug.lng, sug.lat])
+            .addTo(m);
+          discoverMarkersRef.current[sug._sid] = marker;
+        }
+      });
+  }
+
   function handleSuggestionClick(sug) {
     const m = mapRef.current;
     if (m)
@@ -346,17 +461,23 @@ export default function Globe({ user, map, onMapChange, onExit }) {
     });
     const pin = await res.json();
 
-    suggestionMarkersRef.current[suggestion._sid]?.remove();
-    delete suggestionMarkersRef.current[suggestion._sid];
-
-    const updatedSuggestions = suggestions.filter(
-      (s) => s._sid !== suggestion._sid,
-    );
-    setSuggestions(updatedSuggestions);
-    localStorage.setItem(
-      SEARCH_KEY(map.id),
-      JSON.stringify(updatedSuggestions),
-    );
+    if (suggestionMarkersRef.current[suggestion._sid]) {
+      suggestionMarkersRef.current[suggestion._sid].remove();
+      delete suggestionMarkersRef.current[suggestion._sid];
+      const updatedSuggestions = suggestions.filter(
+        (s) => s._sid !== suggestion._sid,
+      );
+      setSuggestions(updatedSuggestions);
+      localStorage.setItem(SEARCH_KEY(map.id), JSON.stringify(updatedSuggestions));
+    } else if (discoverMarkersRef.current[suggestion._sid]) {
+      discoverMarkersRef.current[suggestion._sid].remove();
+      delete discoverMarkersRef.current[suggestion._sid];
+      const updatedDiscover = discoverSpots.filter(
+        (s) => s._sid !== suggestion._sid,
+      );
+      setDiscoverSpots(updatedDiscover);
+      localStorage.setItem(DISCOVER_KEY(map.id), JSON.stringify(updatedDiscover));
+    }
 
     if (opts.research) {
       const pendingPin = { ...pin, research_status: "pending" };
@@ -397,14 +518,39 @@ export default function Globe({ user, map, onMapChange, onExit }) {
             handleSearchTabClose();
           if (next === "search" && toolbarMode !== "search")
             handleSearchTabOpen();
+          if (toolbarMode === "discover" && next !== "discover")
+            handleDiscoverTabClose();
+          if (next === "discover" && toolbarMode !== "discover")
+            handleDiscoverTabOpen();
           setToolbarMode(next);
         }}
         suggestions={suggestions}
-        activeSuggestionId={drawer?.isSuggestion ? drawer._sid : null}
+        activeSuggestionId={
+          drawer?.isSuggestion && suggestions.some((s) => s._sid === drawer._sid)
+            ? drawer._sid
+            : null
+        }
         onSearch={handleSearch}
         onSuggestionClick={handleSuggestionClick}
         onSearchTabClose={handleSearchTabClose}
         onSearchTabOpen={handleSearchTabOpen}
+        discoverSpots={discoverSpots}
+        discoverRegion={discoverRegion}
+        activeDiscoverSpotId={
+          drawer?.isSuggestion && discoverSpots.some((s) => s._sid === drawer._sid)
+            ? drawer._sid
+            : null
+        }
+        onDiscover={handleDiscover}
+        onDiscoverSuggestionClick={(sug) => {
+          const m = mapRef.current;
+          if (m)
+            m.flyTo({
+              center: [sug.lng, sug.lat],
+              zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+              speed: PIN_CLICK_SPEED,
+            });
+        }}
       />
       {modal && (
         <PinModal
