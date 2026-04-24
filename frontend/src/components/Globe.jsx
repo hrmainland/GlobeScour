@@ -4,6 +4,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import PinModal from "./PinModal";
 import Drawer from "./Drawer";
 import ToolbarPanel from "./ToolbarPanel";
+import HamburgerMenu from "./HamburgerMenu";
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 async function reverseGeocode(lng, lat) {
@@ -24,7 +25,9 @@ async function reverseGeocode(lng, lat) {
   }
 }
 
-export default function Globe({ user, map, onMapChange }) {
+const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
+
+export default function Globe({ user, map, onMapChange, onExit }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef({});
@@ -42,15 +45,21 @@ export default function Globe({ user, map, onMapChange }) {
     }
 
     mapboxgl.accessToken = TOKEN;
+    const saved = JSON.parse(localStorage.getItem(VIEW_KEY(map.id)) ?? "null");
     const m = new mapboxgl.Map({
       container: containerRef.current,
       style: "mapbox://styles/mapbox/satellite-streets-v12",
       projection: "globe",
-      zoom: 1.5,
-      center: [0, 20],
+      zoom: saved?.zoom ?? 1.5,
+      center: saved ? [saved.lng, saved.lat] : [0, 20],
     });
 
     m.addControl(new mapboxgl.NavigationControl());
+
+    m.on("moveend", () => {
+      const { lng, lat } = m.getCenter();
+      localStorage.setItem(VIEW_KEY(map.id), JSON.stringify({ lng, lat, zoom: m.getZoom() }));
+    });
 
     m.on("click", async (e) => {
       const { lat, lng } = e.lngLat;
@@ -66,7 +75,7 @@ export default function Globe({ user, map, onMapChange }) {
 
     mapRef.current = m;
     return () => m.remove();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch(`/api/locations?map_id=${map.id}`)
@@ -135,6 +144,7 @@ export default function Globe({ user, map, onMapChange }) {
   return (
     <>
       <div ref={containerRef} style={{ width: "100%", height: "100vh" }} />
+      <HamburgerMenu onChooseMap={onExit} />
       <ToolbarPanel
         mapId={map.id}
         criteria={criteria}

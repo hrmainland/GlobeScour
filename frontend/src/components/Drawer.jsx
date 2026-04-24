@@ -221,7 +221,7 @@ export default function Drawer({
       }
     }, 3000)
     return () => clearInterval(intervalId)
-  }, [status])
+  }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
