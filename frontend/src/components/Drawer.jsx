@@ -210,9 +210,11 @@ export default function Drawer({
     onDelete?.(pin.id);
   }
 
-  async function handleResearch() {
+  async function handleResearch(deep = false) {
     const res = await fetch(`/api/locations/${pin.id}/research`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deep }),
     });
     if (res.ok) {
       setStatus("pending");
@@ -474,9 +476,7 @@ export default function Drawer({
                   Save pin
                 </button>
                 <button
-                  onClick={() =>
-                    onSaveSuggestion?.(pin, nameValue, { research: true })
-                  }
+                  onClick={() => onSaveSuggestion?.(pin, nameValue, { research: true })}
                   style={{
                     padding: "10px 20px",
                     borderRadius: 2,
@@ -490,7 +490,24 @@ export default function Drawer({
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >
-                  Research this spot
+                  Research
+                </button>
+                <button
+                  onClick={() => onSaveSuggestion?.(pin, nameValue, { research: true, deep: true })}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: 2,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.06)",
+                    color: "rgba(255,255,255,0.6)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Deep research
                 </button>
               </div>
             </div>
@@ -527,24 +544,42 @@ export default function Drawer({
                   Claude will search the web and rate this spot across your
                   criteria.
                 </p>
-                <button
-                  onClick={handleResearch}
-                  style={{
-                    alignSelf: "flex-start",
-                    padding: "12px 24px",
-                    borderRadius: 2,
-                    border: "1px solid oklch(0.82 0.13 200)",
-                    background: "oklch(0.82 0.13 200 / 0.12)",
-                    color: "oklch(0.82 0.13 200)",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    letterSpacing: "0.04em",
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  Research this spot
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => handleResearch(false)}
+                    style={{
+                      padding: "12px 24px",
+                      borderRadius: 2,
+                      border: "1px solid oklch(0.82 0.13 200)",
+                      background: "oklch(0.82 0.13 200 / 0.12)",
+                      color: "oklch(0.82 0.13 200)",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      letterSpacing: "0.04em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    Research
+                  </button>
+                  <button
+                    onClick={() => handleResearch(true)}
+                    style={{
+                      padding: "12px 24px",
+                      borderRadius: 2,
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.6)",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      letterSpacing: "0.04em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    Deep research
+                  </button>
+                </div>
               </div>
             )
           )}

@@ -2,7 +2,8 @@ import os
 import json
 import time
 import functools
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Body
+from pydantic import BaseModel
 from bson import ObjectId
 import anthropic
 from db import locations, maps
@@ -31,6 +32,11 @@ def _claude_create(client, **kwargs):
 router = APIRouter(prefix="/api/locations")
 
 DEFAULT_CRITERIA = ["Waves", "Crowds", "Accessibility", "Accommodation", "Vibe"]
+
+# Research cost/depth controls
+MAX_SEARCH_USES = 3       # max web searches Claude can make per research run
+MAX_ITERATIONS = 5        # max agentic loop turns before giving up
+MAX_TOKENS = 1500         # max tokens per API call
 
 
 def build_system_prompt(criteria: list[str], vision: str) -> str:
@@ -124,15 +130,15 @@ def research_location(
 
     messages = [{"role": "user", "content": user_msg}]
     tools = [
-        {"type": "web_search_20260209", "name": "web_search"},
+        {"type": "web_search_20260209", "name": "web_search", "max_uses": MAX_SEARCH_USES},
         build_record_tool(criteria),
     ]
 
-    while True:
+    for iteration in range(MAX_ITERATIONS):
         response = _claude_create(
             client,
             model="claude-sonnet-4-6",
-            max_tokens=4096,
+            max_tokens=MAX_TOKENS,
             system=build_system_prompt(criteria, vision),
             tools=tools,
             tool_choice={"type": "any"},
@@ -149,6 +155,7 @@ def research_location(
             None,
         )
         if record_block:
+            print(f"[research] completed in {iteration + 1} iteration(s)")
             return record_block.input
 
         messages.append({"role": "assistant", "content": response.content})
@@ -160,6 +167,8 @@ def research_location(
                     "content": "Now call record_research with your findings.",
                 }
             )
+
+    raise RuntimeError(f"research did not complete within {MAX_ITERATIONS} iterations")
 
 
 def _run_debug_task(oid: ObjectId, criteria: list[str]):
@@ -175,6 +184,37 @@ def _run_debug_task(oid: ObjectId, criteria: list[str]):
         {"_id": oid},
         {"$set": {"research": result, "research_status": "done"}},
     )
+
+
+def _run_simple_research_task(oid: ObjectId, doc: dict, criteria: list[str], vision: str):
+    try:
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        user_msg = build_user_message(
+            doc["name"], doc["lat"], doc["lng"], doc.get("geocode_context"), criteria
+        )
+        response = _claude_create(
+            client,
+            model="claude-sonnet-4-6",
+            max_tokens=MAX_TOKENS,
+            system=build_system_prompt(criteria, vision),
+            tools=[build_record_tool(criteria)],
+            tool_choice={"type": "tool", "name": "record_research"},
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        record_block = next(
+            (b for b in response.content if getattr(b, "type", None) == "tool_use"),
+            None,
+        )
+        if not record_block:
+            raise RuntimeError("no record_research call in response")
+        locations.update_one(
+            {"_id": oid},
+            {"$set": {"research": record_block.input, "research_status": "done"}},
+        )
+        print("[research] simple task completed")
+    except Exception as e:
+        print(f"[research] simple task failed: {e}")
+        locations.update_one({"_id": oid}, {"$set": {"research_status": "failed"}})
 
 
 def _run_research_task(oid: ObjectId, doc: dict, criteria: list[str], vision: str):
@@ -199,8 +239,12 @@ def _run_research_task(oid: ObjectId, doc: dict, criteria: list[str], vision: st
         )
 
 
+class ResearchOptions(BaseModel):
+    deep: bool = False
+
+
 @router.post("/{location_id}/research", status_code=202)
-def run_research(location_id: str, background_tasks: BackgroundTasks):
+def run_research(location_id: str, background_tasks: BackgroundTasks, options: ResearchOptions = Body(default=ResearchOptions())):
     try:
         oid = ObjectId(location_id)
     except Exception:
@@ -228,6 +272,8 @@ def run_research(location_id: str, background_tasks: BackgroundTasks):
     locations.update_one({"_id": oid}, {"$set": {"research_status": "pending"}})
     if DEBUG_RESEARCH:
         background_tasks.add_task(_run_debug_task, oid, criteria)
-    else:
+    elif options.deep:
         background_tasks.add_task(_run_research_task, oid, doc, criteria, vision)
+    else:
+        background_tasks.add_task(_run_simple_research_task, oid, doc, criteria, vision)
     return {"status": "pending"}

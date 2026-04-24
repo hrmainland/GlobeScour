@@ -2,8 +2,11 @@ Top Priority:
 - Change pin name
 - Error handling
 - Testing
+- Criteria update (one per line with description, passed into prompt)
+- Prompt and tool use update (use tools only where they will actually help, don't be afraid of red)
 
 Nice to have:
+- Deep dive on criteria or custom
 - Include images in pin
 - Remove location type from location object
 - Scroll to bottom of drawer closes it (remove all the pixel stuff)

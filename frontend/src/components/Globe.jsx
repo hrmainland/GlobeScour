@@ -362,7 +362,11 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       const pendingPin = { ...pin, research_status: "pending" };
       setPins((prev) => [...prev, pendingPin]);
       setDrawer(pendingPin);
-      await fetch(`/api/locations/${pin.id}/research`, { method: "POST" });
+      await fetch(`/api/locations/${pin.id}/research`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deep: opts.deep ?? false }),
+      });
     } else {
       setPins((prev) => [...prev, pin]);
       setDrawer(pin);

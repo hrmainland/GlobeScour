@@ -22,6 +22,7 @@ export default function ToolbarPanel({
   const [newItem, setNewItem] = useState('')
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [searching, setSearching] = useState(false)
   const saveTimer = useRef(null)
 
   function switchMode(next) {
@@ -62,10 +63,13 @@ export default function ToolbarPanel({
     update({ ...criteria, vision: vision.slice(0, VISION_MAX) })
   }
 
-  function handleSearchSubmit(e) {
+  async function handleSearchSubmit(e) {
     e.preventDefault()
     const q = searchQuery.trim()
-    if (q) onSearch?.(q)
+    if (!q) return
+    setSearching(true)
+    await onSearch?.(q)
+    setSearching(false)
   }
 
   const panelBase = {
@@ -146,21 +150,37 @@ export default function ToolbarPanel({
               autoFocus
               style={inputStyle}
             />
-            <button type="submit" style={{
+            <button type="submit" disabled={searching} style={{
               padding: '6px 10px',
               borderRadius: 5,
               border: '1px solid rgba(255,255,255,0.15)',
               background: 'rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.7)',
+              color: searching ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)',
               fontSize: 12,
-              cursor: 'pointer',
+              cursor: searching ? 'default' : 'pointer',
               flexShrink: 0,
             }}>
               Go
             </button>
           </form>
 
-          {suggestions.length > 0 && (
+          {searching && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px' }}>
+              <div style={{
+                width: 14, height: 14, borderRadius: '50%',
+                border: '2px solid rgba(255,255,255,0.1)',
+                borderTopColor: 'rgba(255,255,255,0.5)',
+                animation: 'spin 0.8s linear infinite',
+                flexShrink: 0,
+              }} />
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono', monospace" }}>
+                Searching…
+              </span>
+              <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+            </div>
+          )}
+
+          {!searching && suggestions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {suggestions.map(sug => {
                 const country = sug.context.find(c => c.id?.startsWith('country.'))?.text
