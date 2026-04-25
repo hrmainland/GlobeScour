@@ -9,6 +9,8 @@ import HamburgerMenu from "./HamburgerMenu";
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 const PIN_CLICK_MIN_ZOOM = 6;
 const PIN_CLICK_SPEED = 4;
+// Cluster radius in pixels — lower = only cluster very nearby pins (Mapbox default is 50)
+const PIN_CLUSTER_RADIUS = 40;
 const VIEW_KEY = (mapId) => `globescour_view_${mapId}`;
 const SEARCH_KEY = (mapId) => `globescour_search_${mapId}`;
 const DISCOVER_KEY = (mapId) => `globescour_discover_${mapId}`;
@@ -81,6 +83,17 @@ async function forwardGeocode(query) {
   }
 }
 
+function makePinsGeoJSON(pins) {
+  return {
+    type: "FeatureCollection",
+    features: pins.map((pin) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [pin.lng, pin.lat] },
+      properties: { id: pin.id, name: pin.name },
+    })),
+  };
+}
+
 function makeSuggestionEl() {
   const el = document.createElement("div");
   el.style.cssText = `
@@ -96,8 +109,8 @@ function makeSuggestionEl() {
 export default function Globe({ user, map, onMapChange, onExit }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
-  const markersRef = useRef({});
   const pinsRef = useRef([]);
+  const pinsSourceReadyRef = useRef(false);
   const suggestionMarkersRef = useRef({});
   const discoverMarkersRef = useRef({});
 
@@ -171,7 +184,116 @@ export default function Globe({ user, map, onMapChange, onExit }) {
       );
     });
 
+    m.on("load", () => {
+      m.addSource("pins", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: true,
+        clusterRadius: PIN_CLUSTER_RADIUS,
+        clusterMaxZoom: 16,
+      });
+
+      m.addLayer({
+        id: "pins-clusters",
+        type: "circle",
+        source: "pins",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": "#3b82f6",
+          "circle-radius": ["step", ["get", "point_count"], 14, 5, 18, 20, 22],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+          "circle-opacity": 0.9,
+        },
+      });
+
+      m.addLayer({
+        id: "pins-cluster-count",
+        type: "symbol",
+        source: "pins",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": "{point_count_abbreviated}",
+          "text-size": 12,
+          "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"],
+        },
+        paint: { "text-color": "#fff" },
+      });
+
+      m.addLayer({
+        id: "pins-unclustered",
+        type: "circle",
+        source: "pins",
+        filter: ["!", ["has", "point_count"]],
+        paint: {
+          "circle-color": "#3b82f6",
+          "circle-radius": 7,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+          "circle-opacity": 0.9,
+        },
+      });
+
+      m.addLayer({
+        id: "pins-label",
+        type: "symbol",
+        source: "pins",
+        filter: ["!", ["has", "point_count"]],
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 11,
+          "text-offset": [1.2, 0],
+          "text-anchor": "left",
+          "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"],
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#fff",
+          "text-halo-color": "rgba(0,0,0,0.6)",
+          "text-halo-width": 1.5,
+        },
+      });
+
+      m.on("click", "pins-clusters", (e) => {
+        const feature = e.features[0];
+        m.getSource("pins").getClusterExpansionZoom(
+          feature.properties.cluster_id,
+          (err, zoom) => {
+            if (err) return;
+            m.easeTo({ center: feature.geometry.coordinates, zoom });
+          },
+        );
+      });
+
+      m.on("click", "pins-unclustered", (e) => {
+        const { id: pinId } = e.features[0].properties;
+        const latest = pinsRef.current.find((p) => p.id === pinId);
+        if (!latest) return;
+        mapRef.current.flyTo({
+          center: e.features[0].geometry.coordinates.slice(),
+          zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
+          speed: PIN_CLICK_SPEED,
+        });
+        setDrawer(latest);
+      });
+
+      m.on("mouseenter", "pins-clusters", () => { m.getCanvas().style.cursor = "pointer"; });
+      m.on("mouseleave", "pins-clusters", () => { m.getCanvas().style.cursor = ""; });
+      m.on("mouseenter", "pins-unclustered", () => { m.getCanvas().style.cursor = "pointer"; });
+      m.on("mouseleave", "pins-unclustered", () => { m.getCanvas().style.cursor = ""; });
+
+      pinsSourceReadyRef.current = true;
+      if (pinsRef.current.length > 0) {
+        m.getSource("pins").setData(makePinsGeoJSON(pinsRef.current));
+      }
+    });
+
+    // Skip globe click when a pin or cluster was hit
     m.on("click", async (e) => {
+      const hit = m.queryRenderedFeatures(e.point, {
+        layers: ["pins-unclustered", "pins-clusters"],
+      });
+      if (hit.length > 0) return;
       const { lat, lng } = e.lngLat;
       const geocode = await reverseGeocode(lng, lat);
       setModal({
@@ -195,40 +317,10 @@ export default function Globe({ user, map, onMapChange, onExit }) {
 
   useEffect(() => {
     pinsRef.current = pins;
-  }, [pins]);
-
-  useEffect(() => {
     const m = mapRef.current;
-    if (!m) return;
-
-    pins.forEach((pin) => {
-      if (markersRef.current[pin.id]) return;
-
-      const el = document.createElement("div");
-      el.style.cssText = `
-        width: 14px; height: 14px;
-        background: #3b82f6; border-radius: 50%;
-        border: 2px solid #fff;
-        cursor: pointer;
-        box-shadow: 0 0 6px rgba(0,0,0,0.4);
-      `;
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const latest = pinsRef.current.find((p) => p.id === pin.id) ?? pin;
-        mapRef.current.flyTo({
-          center: [pin.lng, pin.lat],
-          zoom: Math.max(mapRef.current.getZoom(), PIN_CLICK_MIN_ZOOM),
-          speed: PIN_CLICK_SPEED,
-        });
-        setDrawer(latest);
-      });
-
-      const marker = new mapboxgl.Marker({ element: el })
-        .setLngLat([pin.lng, pin.lat])
-        .addTo(m);
-
-      markersRef.current[pin.id] = marker;
-    });
+    if (m && pinsSourceReadyRef.current) {
+      m.getSource("pins")?.setData(makePinsGeoJSON(pins));
+    }
   }, [pins]);
 
   async function handleSavePin(name) {
@@ -564,6 +656,7 @@ export default function Globe({ user, map, onMapChange, onExit }) {
           key={drawer.id ?? drawer._sid}
           pin={drawer}
           criteria={criteria}
+          user={user}
           onClose={() => setDrawer(null)}
           onRename={handleRenamePin}
           onSaveSuggestion={handleSaveSuggestion}
@@ -586,8 +679,6 @@ export default function Globe({ user, map, onMapChange, onExit }) {
             setDrawer(updated);
           }}
           onDelete={(id) => {
-            markersRef.current[id]?.remove();
-            delete markersRef.current[id];
             setPins((prev) => prev.filter((p) => p.id !== id));
             setDrawer(null);
           }}

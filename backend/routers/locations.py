@@ -21,6 +21,11 @@ class LocationUpdate(BaseModel):
     name: str
 
 
+class NotesUpdate(BaseModel):
+    notes: str
+    edited_by: str
+
+
 def serialize(doc) -> dict:
     doc["id"] = str(doc.pop("_id"))
     return doc
@@ -50,6 +55,28 @@ def update_location(location_id: str, body: LocationUpdate):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid location id")
     result = locations.update_one({"_id": oid}, {"$set": {"name": body.name}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Location not found")
+    doc = locations.find_one({"_id": oid})
+    return serialize(doc)
+
+
+@router.patch("/{location_id}/notes")
+def update_notes(location_id: str, body: NotesUpdate):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    result = locations.update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "notes": body.notes,
+                "notes_last_edited_by": body.edited_by,
+                "notes_last_edited_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Location not found")
     doc = locations.find_one({"_id": oid})

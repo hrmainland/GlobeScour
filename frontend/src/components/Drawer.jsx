@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import NotesEditor from "./NotesEditor";
 
 const TRAFFIC_COLORS = {
   green: {
@@ -95,6 +96,7 @@ export default function Drawer({
   onDelete,
   onRename,
   onSaveSuggestion,
+  user,
 }) {
   const [research, setResearch] = useState(pin.research ?? null);
   const [status, setStatus] = useState(pin.research_status ?? "none");
@@ -769,6 +771,36 @@ export default function Drawer({
               >
                 Re-research
               </button>
+            </div>
+          )}
+
+          {!pin.isSuggestion && (
+            <div
+              style={{
+                borderTop: "1px solid rgba(255,255,255,0.07)",
+                paddingTop: 20,
+                marginTop: 8,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "rgba(255,255,255,0.3)",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  marginBottom: 10,
+                }}
+              >
+                Notes
+              </div>
+              <NotesEditor
+                pinId={pin.id}
+                initialContent={pin.notes ?? ""}
+                initialEditedBy={pin.notes_last_edited_by ?? null}
+                initialEditedAt={pin.notes_last_edited_at ?? null}
+                user={user}
+              />
             </div>
           )}
         </div>
