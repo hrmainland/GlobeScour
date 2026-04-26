@@ -99,7 +99,15 @@ export default function Drawer({
   user,
 }) {
   const [research, setResearch] = useState(pin.research ?? null);
+  const [sources, setSources] = useState(pin.research?.sources ?? []);
   const [status, setStatus] = useState(pin.research_status ?? "none");
+  const [sourceMeta, setSourceMeta] = useState({});
+  const [userLinks, setUserLinks] = useState(pin.user_links ?? []);
+  const [addingLink, setAddingLink] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkTitle, setLinkTitle] = useState("");
+  const [linkDesc, setLinkDesc] = useState("");
+  const [linkSaving, setLinkSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [heightPx, setHeightPx] = useState(INITIAL_PX);
   const [editingName, setEditingName] = useState(false);
@@ -212,6 +220,31 @@ export default function Drawer({
     onDelete?.(pin.id);
   }
 
+  async function handleAddLink(e) {
+    e.preventDefault();
+    const url = linkUrl.trim();
+    const title = linkTitle.trim();
+    if (!url || !title) return;
+    setLinkSaving(true);
+    const res = await fetch(`/api/locations/${pin.id}/links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, title, description: linkDesc.trim(), added_by: user }),
+    });
+    const link = await res.json();
+    setUserLinks((prev) => [...prev, link]);
+    setLinkUrl("");
+    setLinkTitle("");
+    setLinkDesc("");
+    setAddingLink(false);
+    setLinkSaving(false);
+  }
+
+  async function handleDeleteLink(linkId) {
+    await fetch(`/api/locations/${pin.id}/links/${linkId}`, { method: "DELETE" });
+    setUserLinks((prev) => prev.filter((l) => l.id !== linkId));
+  }
+
   async function handleResearch(deep = false) {
     const res = await fetch(`/api/locations/${pin.id}/research`, {
       method: "POST",
@@ -235,6 +268,7 @@ export default function Drawer({
         if (newStatus === "done") {
           setStatus("done");
           setResearch(data.research);
+          setSources(data.research?.sources ?? []);
           onResearchDone(data.research);
         }
         if (newStatus === "failed") setStatus("failed");
@@ -244,6 +278,32 @@ export default function Drawer({
     }, 3000);
     return () => clearInterval(intervalId);
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const sources = research?.sources ?? [];
+    sources.forEach(async (url) => {
+      if (!url.startsWith("http") || sourceMeta[url] !== undefined) return;
+      // Mark as in-flight so we don't double-fetch
+      setSourceMeta((prev) => ({ ...prev, [url]: null }));
+      try {
+        const res = await fetch(
+          `https://api.microlink.io/?url=${encodeURIComponent(url)}`,
+        );
+        const data = await res.json();
+        if (data.status === "success") {
+          setSourceMeta((prev) => ({
+            ...prev,
+            [url]: {
+              title: data.data.title || null,
+              publisher: data.data.publisher || null,
+            },
+          }));
+        }
+      } catch {
+        // leave as null — falls back to raw URL display
+      }
+    });
+  }, [research]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -707,70 +767,6 @@ export default function Drawer({
                 </div>
               )}
 
-              {Array.isArray(research.sources) &&
-                research.sources.length > 0 && (
-                  <div style={{ width: "100%" }}>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        letterSpacing: "0.1em",
-                        textTransform: "uppercase",
-                        color: "rgba(255,255,255,0.3)",
-                        fontFamily: "'JetBrains Mono', monospace",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Sources
-                    </div>
-                    {research.sources.map((src, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          fontSize: 12,
-                          color: "rgba(255,255,255,0.4)",
-                          marginBottom: 4,
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {src.startsWith("http") ? (
-                          <a
-                            href={src}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              color: "oklch(0.82 0.13 200)",
-                              textDecoration: "none",
-                            }}
-                          >
-                            {src}
-                          </a>
-                        ) : (
-                          src
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-              <button
-                onClick={() => {
-                  setResearch(null);
-                  setStatus("none");
-                }}
-                style={{
-                  padding: "10px 20px",
-                  borderRadius: 2,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "transparent",
-                  color: "rgba(255,255,255,0.4)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                Re-research
-              </button>
             </div>
           )}
 
@@ -802,6 +798,324 @@ export default function Drawer({
                 user={user}
               />
             </div>
+          )}
+
+          {!pin.isSuggestion && (
+            <div
+              style={{
+                borderTop: "1px solid rgba(255,255,255,0.07)",
+                paddingTop: 20,
+                marginTop: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: userLinks.length > 0 || addingLink ? 10 : 0,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "rgba(255,255,255,0.3)",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Links
+                </div>
+                {!addingLink && (
+                  <button
+                    onClick={() => setAddingLink(true)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "rgba(255,255,255,0.35)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      padding: 0,
+                    }}
+                  >
+                    + add
+                  </button>
+                )}
+              </div>
+
+              {addingLink && (
+                <form
+                  onSubmit={handleAddLink}
+                  style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}
+                >
+                  {[
+                    { value: linkUrl, setter: setLinkUrl, placeholder: "URL", type: "url", required: true },
+                    { value: linkTitle, setter: setLinkTitle, placeholder: "Title", required: true },
+                    { value: linkDesc, setter: setLinkDesc, placeholder: "Description (optional)" },
+                  ].map(({ value, setter, placeholder, type = "text", required }) => (
+                    <input
+                      key={placeholder}
+                      type={type}
+                      value={value}
+                      onChange={(e) => setter(e.target.value)}
+                      placeholder={placeholder}
+                      required={required}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 5,
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "#fff",
+                        fontSize: 12,
+                        outline: "none",
+                        fontFamily: "inherit",
+                      }}
+                    />
+                  ))}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="submit"
+                      disabled={linkSaving}
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: 5,
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.08)",
+                        color: linkSaving ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.7)",
+                        fontSize: 12,
+                        cursor: linkSaving ? "default" : "pointer",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      {linkSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAddingLink(false); setLinkUrl(""); setLinkTitle(""); setLinkDesc(""); }}
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: 5,
+                        border: "none",
+                        background: "none",
+                        color: "rgba(255,255,255,0.3)",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {userLinks.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {userLinks.map((link) => {
+                    const hostname = (() => { try { return new URL(link.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                    return (
+                      <div key={link.id} style={{ position: "relative" }}>
+                        <a
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: "block",
+                            padding: "10px 32px 10px 12px",
+                            borderRadius: 6,
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            background: "rgba(255,255,255,0.03)",
+                            textDecoration: "none",
+                            transition: "background 0.1s",
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                        >
+                          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", fontWeight: 500, lineHeight: 1.4 }}>
+                            {link.title}
+                          </div>
+                          {link.description && (
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 3, lineHeight: 1.4 }}>
+                              {link.description}
+                            </div>
+                          )}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+                            {hostname && (
+                              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontFamily: "'JetBrains Mono', monospace" }}>
+                                {hostname}
+                              </span>
+                            )}
+                            {link.added_by && (
+                              <span style={{
+                                fontSize: 10,
+                                color: "rgba(255,255,255,0.35)",
+                                background: "rgba(255,255,255,0.07)",
+                                border: "1px solid rgba(255,255,255,0.1)",
+                                borderRadius: 99,
+                                padding: "1px 7px",
+                                fontFamily: "'JetBrains Mono', monospace",
+                              }}>
+                                {link.added_by}
+                              </span>
+                            )}
+                          </div>
+                        </a>
+                        <button
+                          onClick={() => handleDeleteLink(link.id)}
+                          style={{
+                            position: "absolute",
+                            top: 8,
+                            right: 8,
+                            background: "none",
+                            border: "none",
+                            color: "rgba(255,255,255,0.2)",
+                            fontSize: 14,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                            padding: "2px 4px",
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.color = "rgba(239,68,68,0.6)"}
+                          onMouseLeave={(e) => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!pin.isSuggestion && sources.length > 0 && (
+              <div
+                style={{
+                  borderTop: "1px solid rgba(255,255,255,0.07)",
+                  paddingTop: 20,
+                  marginTop: 8,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "rgba(255,255,255,0.3)",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    marginBottom: 8,
+                  }}
+                >
+                  Sources
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {sources.map((src, i) => {
+                    const meta = sourceMeta[src];
+                    const isUrl = src.startsWith("http");
+                    const hostname = isUrl
+                      ? (() => { try { return new URL(src).hostname.replace(/^www\./, ""); } catch { return src; } })()
+                      : null;
+                    return (
+                      <div key={i} style={{ position: "relative" }}>
+                        <a
+                          href={isUrl ? src : undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: "block",
+                            padding: "10px 32px 10px 12px",
+                            borderRadius: 6,
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            background: "rgba(255,255,255,0.03)",
+                            textDecoration: "none",
+                            transition: "background 0.1s",
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                        >
+                          {meta?.publisher && (
+                            <div style={{
+                              fontSize: 10,
+                              letterSpacing: "0.06em",
+                              textTransform: "uppercase",
+                              color: "rgba(255,255,255,0.3)",
+                              fontFamily: "'JetBrains Mono', monospace",
+                              marginBottom: 3,
+                            }}>
+                              {meta.publisher}
+                            </div>
+                          )}
+                          <div style={{
+                            fontSize: 13,
+                            color: "rgba(255,255,255,0.75)",
+                            lineHeight: 1.4,
+                            fontWeight: meta?.title ? 500 : 400,
+                            wordBreak: meta?.title ? "normal" : "break-all",
+                          }}>
+                            {meta?.title || src}
+                          </div>
+                          {meta?.title && hostname && (
+                            <div style={{
+                              fontSize: 11,
+                              color: "rgba(255,255,255,0.25)",
+                              marginTop: 3,
+                              fontFamily: "'JetBrains Mono', monospace",
+                            }}>
+                              {hostname}
+                            </div>
+                          )}
+                        </a>
+                        <button
+                          onClick={async () => {
+                            await fetch(`/api/locations/${pin.id}/research/sources?url=${encodeURIComponent(src)}`, { method: "DELETE" });
+                            setSources((prev) => prev.filter((_, j) => j !== i));
+                          }}
+                          style={{
+                            position: "absolute",
+                            top: 8,
+                            right: 8,
+                            background: "none",
+                            border: "none",
+                            color: "rgba(255,255,255,0.2)",
+                            fontSize: 14,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                            padding: "2px 4px",
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.color = "rgba(239,68,68,0.6)"}
+                          onMouseLeave={(e) => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+          {!pin.isSuggestion && research && (
+            <button
+              onClick={() => {
+                setResearch(null);
+                setStatus("none");
+              }}
+              style={{
+                marginTop: 8,
+                padding: "10px 20px",
+                borderRadius: 2,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "transparent",
+                color: "rgba(255,255,255,0.4)",
+                fontSize: 12,
+                cursor: "pointer",
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: "0.04em",
+              }}
+            >
+              Re-research
+            </button>
           )}
         </div>
       </div>

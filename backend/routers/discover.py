@@ -110,7 +110,7 @@ def discover(body: DiscoverRequest):
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=600,
+            max_tokens=1000,
             system=system,
             tools=[tool],
             tool_choice={"type": "tool", "name": "record_regions"},
@@ -162,7 +162,7 @@ def discover(body: DiscoverRequest):
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=800,
+            max_tokens=1000,
             system=system,
             tools=[tool],
             tool_choice={"type": "tool", "name": "record_spots"},

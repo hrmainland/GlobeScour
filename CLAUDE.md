@@ -12,7 +12,7 @@ A collaborative trip-planning app. Users create named maps, drop pins on a globe
 
 ## Current state (as of April 2026)
 
-Phases 1–4 complete. Multi-map support, dynamic criteria, async research, search with suggestion pins, and pin rename all shipped.
+Phases 1–4 complete. Multi-map support, dynamic criteria, async research, search with suggestion pins, pin rename, collaborative notes, user-saved links, AI discover (regions/spots), pin clustering with labels, and map sharing all shipped.
 
 ## Architecture
 
@@ -32,6 +32,7 @@ User state lives in `localStorage` (just a name string — no auth yet). Map sta
 ```
 {
   _id, name, created_by,
+  members: string[],              // usernames this map is shared with
   criteria: { items: string[], vision: string },
   created_at
 }
@@ -47,6 +48,10 @@ User state lives in `localStorage` (just a name string — no auth yet). Map sta
     summary, ratings: { [criterion]: "green"|"amber"|"red" },
     ratings_notes: { [criterion]: string }, sources: string[]
   },
+  notes: string,                     // Tiptap HTML, autosaved
+  notes_last_edited_by: string,
+  notes_last_edited_at: string,      // ISO UTC
+  user_links: [{ id, url, title, description, added_by, added_at }],
   created_at
 }
 ```
@@ -68,10 +73,12 @@ User state lives in `localStorage` (just a name string — no auth yet). Map sta
 ## API routes
 
 ```
-GET    /api/maps?user=           list maps for a user
-POST   /api/maps                 create map { name, created_by }
-GET    /api/maps/:id             get single map (includes criteria)
-PATCH  /api/maps/:id/criteria    update criteria { items, vision }
+GET    /api/maps?user=                list maps for a user (own + shared)
+POST   /api/maps                      create map { name, created_by }
+GET    /api/maps/:id                  get single map (includes criteria)
+PATCH  /api/maps/:id/criteria         update criteria { items, vision }
+POST   /api/maps/:id/members          add member { username } ($addToSet)
+DELETE /api/maps/:id/members/:user    remove member ($pull)
 
 GET    /api/locations?map_id=    list pins for a map
 POST   /api/locations            create pin (requires map_id)
@@ -79,7 +86,13 @@ GET    /api/locations/:id        get single pin
 PATCH  /api/locations/:id        rename pin { name }
 DELETE /api/locations/:id        delete pin
 
+PATCH  /api/locations/:id/notes       update notes { notes, edited_by }
+POST   /api/locations/:id/links       add user link { url, title, description, added_by }
+DELETE /api/locations/:id/links/:lid  remove user link
+
 POST   /api/locations/:id/research   trigger Claude research (202, async — pulls criteria from map)
+
+POST   /api/discover                 Claude-powered spot/region suggestions + Nominatim geocoding
 ```
 
 ## AI research flow

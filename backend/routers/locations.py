@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
@@ -24,6 +25,13 @@ class LocationUpdate(BaseModel):
 class NotesUpdate(BaseModel):
     notes: str
     edited_by: str
+
+
+class UserLinkIn(BaseModel):
+    url: str
+    title: str
+    description: str = ""
+    added_by: str = ""
 
 
 def serialize(doc) -> dict:
@@ -81,6 +89,44 @@ def update_notes(location_id: str, body: NotesUpdate):
         raise HTTPException(status_code=404, detail="Location not found")
     doc = locations.find_one({"_id": oid})
     return serialize(doc)
+
+
+@router.post("/{location_id}/links", status_code=201)
+def add_link(location_id: str, body: UserLinkIn):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    link = {
+        "id": str(uuid.uuid4()),
+        "url": body.url,
+        "title": body.title,
+        "description": body.description,
+        "added_by": body.added_by,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = locations.update_one({"_id": oid}, {"$push": {"user_links": link}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Location not found")
+    return link
+
+
+@router.delete("/{location_id}/links/{link_id}", status_code=204)
+def delete_link(location_id: str, link_id: str):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    locations.update_one({"_id": oid}, {"$pull": {"user_links": {"id": link_id}}})
+
+
+@router.delete("/{location_id}/research/sources", status_code=204)
+def delete_source(location_id: str, url: str = Query(...)):
+    try:
+        oid = ObjectId(location_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid location id")
+    locations.update_one({"_id": oid}, {"$pull": {"research.sources": url}})
 
 
 @router.delete("/{location_id}", status_code=204)

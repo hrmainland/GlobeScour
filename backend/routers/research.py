@@ -36,7 +36,7 @@ DEFAULT_CRITERIA = ["Waves", "Crowds", "Accessibility", "Accommodation", "Vibe"]
 # Research cost/depth controls
 MAX_SEARCH_USES = 3       # max web searches Claude can make per research run
 MAX_ITERATIONS = 5        # max agentic loop turns before giving up
-MAX_TOKENS = 1500         # max tokens per API call
+MAX_TOKENS = 3000         # max tokens out per API call
 
 
 def build_system_prompt(criteria: list[str], vision: str) -> str:
@@ -52,37 +52,41 @@ Rating guide:
 - red = poor / significant downsides"""
 
 
-def build_record_tool(criteria: list[str]) -> dict:
+def build_record_tool(criteria: list[str], include_sources: bool = True) -> dict:
+    properties = {
+        "summary": {
+            "type": "string",
+            "description": "2-3 sentence overview of the location",
+        },
+        "ratings": {
+            "type": "object",
+            "properties": {
+                c: {"type": "string", "enum": ["green", "amber", "red"]}
+                for c in criteria
+            },
+            "required": criteria,
+        },
+        "ratings_notes": {
+            "type": "object",
+            "properties": {c: {"type": "string"} for c in criteria},
+            "required": criteria,
+        },
+    }
+    required = ["summary", "ratings", "ratings_notes"]
+    if include_sources:
+        properties["sources"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "URLs or titles of sources used",
+        }
+        required.append("sources")
     return {
         "name": "record_research",
         "description": "Record the final research findings for the location.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "2-3 sentence overview of the location",
-                },
-                "ratings": {
-                    "type": "object",
-                    "properties": {
-                        c: {"type": "string", "enum": ["green", "amber", "red"]}
-                        for c in criteria
-                    },
-                    "required": criteria,
-                },
-                "ratings_notes": {
-                    "type": "object",
-                    "properties": {c: {"type": "string"} for c in criteria},
-                    "required": criteria,
-                },
-                "sources": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "URLs or titles of sources used",
-                },
-            },
-            "required": ["summary", "ratings", "ratings_notes", "sources"],
+            "properties": properties,
+            "required": required,
         },
     }
 
@@ -197,7 +201,7 @@ def _run_simple_research_task(oid: ObjectId, doc: dict, criteria: list[str], vis
             model="claude-sonnet-4-6",
             max_tokens=MAX_TOKENS,
             system=build_system_prompt(criteria, vision),
-            tools=[build_record_tool(criteria)],
+            tools=[build_record_tool(criteria, include_sources=False)],
             tool_choice={"type": "tool", "name": "record_research"},
             messages=[{"role": "user", "content": user_msg}],
         )

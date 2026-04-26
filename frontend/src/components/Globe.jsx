@@ -599,7 +599,7 @@ export default function Globe({ user, map, onMapChange, onExit }) {
   return (
     <>
       <div ref={containerRef} style={{ width: "100%", height: "100vh" }} />
-      <HamburgerMenu onChooseMap={onExit} />
+      <HamburgerMenu onChooseMap={onExit} map={map} user={user} onUpdateMap={onMapChange} />
       <ToolbarPanel
         mapId={map.id}
         criteria={criteria}
